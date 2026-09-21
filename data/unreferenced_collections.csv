@@ -1,0 +1,106 @@
+collection,category,why,mdd_coll_id,set_type_id
+alfresco_relative_flammability_30yr_crstephenson_2025_01_29_22_33_29_8492,abandoned ingest,timestamped copy of a coverage that no longer exists,261,59
+alfresco_relative_flammability_30yr_crstephenson_2025_01_29_22_34_21_289,abandoned ingest,timestamped copy of a coverage that no longer exists,262,59
+alfresco_relative_flammability_30yr_crstephenson_2025_01_29_22_35_17_8511,abandoned ingest,timestamped copy of a coverage that no longer exists,263,59
+alfresco_relative_flammability_30yr_crstephenson_2025_01_29_22_37_05_979,abandoned ingest,timestamped copy of a coverage that no longer exists,264,59
+alfresco_relative_flammability_30yr_crstephenson_2025_01_29_22_37_14_1075,abandoned ingest,timestamped copy of a coverage that no longer exists,265,59
+alfresco_relative_flammability_30yr_crstephenson_2025_01_29_22_41_18_73,abandoned ingest,timestamped copy of a coverage that no longer exists,266,59
+alfresco_relative_flammability_30yr_crstephenson_2025_01_29_22_42_31_7412,abandoned ingest,timestamped copy of a coverage that no longer exists,267,59
+alfresco_relative_flammability_30yr_crstephenson_2025_01_29_22_48_19_6962,abandoned ingest,timestamped copy of a coverage that no longer exists,268,59
+alfresco_relative_flammability_30yr_crstephenson_2025_01_29_22_49_10_6493,abandoned ingest,timestamped copy of a coverage that no longer exists,269,59
+alfresco_relative_flammability_30yr_crstephenson_2025_01_29_23_38_57_8342,abandoned ingest,timestamped copy of a coverage that no longer exists,270,59
+alfresco_relative_flammability_30yr_crstephenson_2025_02_04_10_29_09_5367,abandoned ingest,timestamped copy of a coverage that no longer exists,295,59
+alfresco_relative_flammability_30yr_crstephenson_2025_04_15_19_37_51_4479,abandoned ingest,timestamped copy of a coverage that no longer exists,303,59
+cmip6_downscaled_crstephenson_2025_08_21_18_48_55_3076,abandoned ingest,timestamped copy of a coverage that no longer exists,500,58
+cmip6_downscaled_tasmax_complete_crstephenson_2025_09_22_12_03_04_2874,abandoned ingest,timestamped copy of a coverage that no longer exists,590,59
+conus_hydro_segments_doy_mmm_2025_12_03_09_17_13_3208,abandoned ingest,timestamped copy of a coverage that no longer exists,1148,452
+conus_hydro_segments_test_exsitu_reg2_2025_12_19_07_48_30_7967,abandoned ingest,timestamped copy of a coverage that no longer exists,1190,491
+conus_hydro_segments_test_exsitu_reg2_2025_12_19_10_13_39_2851,abandoned ingest,timestamped copy of a coverage that no longer exists,1191,491
+conus_hydro_segments_test_exsitu_reg2_2025_12_19_10_55_45_9967,abandoned ingest,timestamped copy of a coverage that no longer exists,1192,491
+test_nan_2025_05_05_11_32_22_1159,abandoned ingest,timestamped copy of a coverage that no longer exists,305,199
+test_nan_2025_05_05_11_35_48_5812,abandoned ingest,timestamped copy of a coverage that no longer exists,306,199
+test_nan_2025_05_05_11_38_33_2870,abandoned ingest,timestamped copy of a coverage that no longer exists,307,199
+test_nan_2025_05_05_11_48_25_1399,abandoned ingest,timestamped copy of a coverage that no longer exists,308,199
+test_nan_2025_05_05_12_19_33_3511,abandoned ingest,timestamped copy of a coverage that no longer exists,309,199
+alfresco_relative_flammability_30yr_crstephenson,personal,named after a user; likely a personal experiment,260,59
+alfresco_relative_flammability_30yr_crstephenson2,personal,named after a user; likely a personal experiment,271,59
+cmip6_downscaled_crstephenson,personal,named after a user; likely a personal experiment,499,58
+cmip6_downscaled_pr_wms_crstephenson,personal,named after a user; likely a personal experiment,587,58
+cmip6_downscaled_tasmax_complete_crstephenson,personal,named after a user; likely a personal experiment,534,59
+conus_hydro_segments_crstephenson3,personal,named after a user; likely a personal experiment,1111,430
+conus_hydro_segments_doy_mmm_maurer,personal,named after a user; likely a personal experiment,1149,453
+conus_hydro_segments_doy_mmm_maurer_historical,personal,named after a user; likely a personal experiment,1153,457
+conus_hydro_segments_doy_mmm_maurer_projected,personal,named after a user; likely a personal experiment,1155,459
+conus_hydro_segments_jp,personal,named after a user; likely a personal experiment,1139,444
+conus_hydro_segments_maurer,personal,named after a user; likely a personal experiment,1150,454
+air_freezing_index_Fdays,shadow,sits at a live coverage id; petascope serves a different array,171,81
+ak_hydro_segments_doy_climatology,shadow,sits at a live coverage id; petascope serves a different array,1235,532
+cmip6_bui,shadow,sits at a live coverage id; petascope serves a different array,1259,556
+cmip6_downscaled_pr_wms,shadow,sits at a live coverage id; petascope serves a different array,1021,58
+cmip6_downscaled_tasmax_wms,shadow,sits at a live coverage id; petascope serves a different array,1099,59
+cmip6_downscaled_tasmin_wms,shadow,sits at a live coverage id; petascope serves a different array,1100,59
+cmip6_ffmc,shadow,sits at a live coverage id; petascope serves a different array,1263,559
+cmip6_fwi,shadow,sits at a live coverage id; petascope serves a different array,565,381
+conus_hydro_segments_jp_test,shadow,sits at a live coverage id; petascope serves a different array,1162,466
+era5_4km_daily_rh2_max,shadow,sits at a live coverage id; petascope serves a different array,408,282
+temperature_anomaly_anomalies,shadow,sits at a live coverage id; petascope serves a different array,296,59
+temperature_anomaly_baselines,shadow,sits at a live coverage id; petascope serves a different array,301,167
+cmip6_downscaled_pr_wms_2025_11_03_11_57_04_8211,superseded ingest,timestamped copy; the live coverage has a newer one,1098,59
+cmip6_downscaled_pr_wms_2025_11_03_12_13_02_4211,superseded ingest,timestamped copy; the live coverage has a newer one,1101,59
+cmip6_downscaled_pr_wms_2025_11_03_12_13_23_37,superseded ingest,timestamped copy; the live coverage has a newer one,1102,59
+cmip6_downscaled_tasmax_wms_2025_11_03_12_15_52_6542,superseded ingest,timestamped copy; the live coverage has a newer one,1105,59
+cmip6_downscaled_tasmax_wms_2025_11_03_12_22_58_1935,superseded ingest,timestamped copy; the live coverage has a newer one,1106,59
+cmip6_downscaled_tasmax_wms_2025_11_03_12_29_56_1055,superseded ingest,timestamped copy; the live coverage has a newer one,1107,59
+cmip6_downscaled_tasmax_wms_2025_11_03_12_57_29_3977,superseded ingest,timestamped copy; the live coverage has a newer one,1108,59
+cmip6_downscaled_tasmax_wms_2025_11_03_13_00_46_4264,superseded ingest,timestamped copy; the live coverage has a newer one,1109,59
+cmip6_downscaled_tasmax_wms_2025_11_03_13_02_14_8024,superseded ingest,timestamped copy; the live coverage has a newer one,1110,59
+cmip6_downscaled_tasmax_wms_2025_11_03_13_42_40_4070,superseded ingest,timestamped copy; the live coverage has a newer one,1113,59
+cmip6_fwi_2025_09_18_10_13_04_2755,superseded ingest,timestamped copy; the live coverage has a newer one,566,381
+cmip6_fwi_2025_09_18_10_26_47_1079,superseded ingest,timestamped copy; the live coverage has a newer one,567,381
+cmip6_fwi_2025_09_18_10_56_56_4428,superseded ingest,timestamped copy; the live coverage has a newer one,568,381
+temperature_anomaly_anomalies_2025_04_15_18_57_28_4022,superseded ingest,timestamped copy; the live coverage has a newer one,297,59
+temperature_anomaly_anomalies_2025_04_15_19_00_35_7060,superseded ingest,timestamped copy; the live coverage has a newer one,298,59
+temperature_anomaly_anomalies_2025_04_15_19_09_25_4754,superseded ingest,timestamped copy; the live coverage has a newer one,299,59
+temperature_anomaly_anomalies_2025_04_15_19_25_00_1352,superseded ingest,timestamped copy; the live coverage has a newer one,302,59
+cmip6_downscaled_pr_wms_test,test/scratch,named as a test or scratch run,1089,59
+cmip6_downscaled_tasmax_wms_test,test/scratch,named as a test or scratch run,1087,59
+cmip6_downscaled_tasmin_wms_test,test/scratch,named as a test or scratch run,1088,59
+cmip6_isi_scratch_description,test/scratch,named as a test or scratch run,983,416
+cmip6_isi_test_description,test/scratch,named as a test or scratch run,981,414
+conus_hydro_segments_doy_climatology_static_projected_test2,test/scratch,named as a test or scratch run,1188,490
+conus_hydro_segments_doy_mmm_maurer_historical_test,test/scratch,named as a test or scratch run,1156,460
+conus_hydro_segments_doy_mmm_maurer_historical_test_2,test/scratch,named as a test or scratch run,1158,462
+conus_hydro_segments_doy_mmm_maurer_projected_test,test/scratch,named as a test or scratch run,1157,461
+conus_hydro_segments_test_exsitu_reg2,test/scratch,named as a test or scratch run,1189,491
+cp_test_gipl_wcs,test/scratch,named as a test or scratch run,1247,544
+crrel_gipl_outputs_test,test/scratch,named as a test or scratch run,289,63
+test_evspsbl_1,test/scratch,named as a test or scratch run,830,401
+test_evspsbl_10,test/scratch,named as a test or scratch run,839,410
+test_evspsbl_11,test/scratch,named as a test or scratch run,840,411
+test_evspsbl_12,test/scratch,named as a test or scratch run,841,412
+test_evspsbl_2,test/scratch,named as a test or scratch run,831,402
+test_evspsbl_3,test/scratch,named as a test or scratch run,832,403
+test_evspsbl_4,test/scratch,named as a test or scratch run,833,404
+test_evspsbl_5,test/scratch,named as a test or scratch run,834,405
+test_evspsbl_6,test/scratch,named as a test or scratch run,835,406
+test_evspsbl_7,test/scratch,named as a test or scratch run,836,407
+test_evspsbl_8,test/scratch,named as a test or scratch run,837,408
+test_evspsbl_9,test/scratch,named as a test or scratch run,838,409
+test_nan,test/scratch,named as a test or scratch run,312,199
+test_nan_nilValue,test/scratch,named as a test or scratch run,313,200
+big_tile_ardac_chukchi_daily_slie,unreferenced,no coverage points at it; origin unclear,486,136
+big_tile_era5_4km_daily_t2_mean,unreferenced,no coverage points at it; origin unclear,484,350
+bigger_tile_era5_4km_daily_t2_mean,unreferenced,no coverage points at it; origin unclear,485,351
+cmip6_daily_pr_full,unreferenced,no coverage points at it; origin unclear,539,366
+cmip6_downscaled_pr_wms_v2,unreferenced,no coverage points at it; origin unclear,1463,59
+cmip6_downscaled_tasmax_wms_v2,unreferenced,no coverage points at it; origin unclear,1464,59
+cmip6_downscaled_tasmin_wms_v2,unreferenced,no coverage points at it; origin unclear,1465,59
+cmip6_isi_new_description,unreferenced,no coverage points at it; origin unclear,982,415
+cmip6_isi_no_description,unreferenced,no coverage points at it; origin unclear,842,413
+conus_hydro_hrus,unreferenced,no coverage points at it; origin unclear,93,122
+conus_hydro_segments_all_stats,unreferenced,no coverage points at it; origin unclear,1160,464
+conus_hydro_segments_doy_mmm,unreferenced,no coverage points at it; origin unclear,1147,452
+conus_hydro_segmentsi_all_stats,unreferenced,no coverage points at it; origin unclear,1159,463
+cp_gipl_wms,unreferenced,no coverage points at it; origin unclear,1277,568
+crrel_gipl_outputs,unreferenced,no coverage points at it; origin unclear,369,63
+wms_optimized_tiled_ardac_chukchi_daily_slie,unreferenced,no coverage points at it; origin unclear,495,136

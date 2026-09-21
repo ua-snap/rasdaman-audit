@@ -1,0 +1,15 @@
+{
+  "capabilities_url": "https://zeus.snap.uaf.edu/rasdaman/ows?&SERVICE=WCS&ACCEPTVERSIONS=2.1.0&REQUEST=GetCapabilities",
+  "rasql_url": "https://zeus.snap.uaf.edu/rasdaman/rasql",
+  "dbinfo_args": "",
+  "recipes_dir": "/home/UA/jdpaul3/repo/rasdaman-ingest",
+  "wcps_domains": true,
+  "resolve_collections": false,
+  "started_utc": "2026-09-21T20:30:43.055357+00:00",
+  "finished_utc": "2026-09-21T20:33:08.242667+00:00",
+  "elapsed_seconds": 145.2,
+  "coverages": 273,
+  "full": 273,
+  "describe_only": 0,
+  "failed": 0
+}
