@@ -405,6 +405,29 @@ the 600. That's not noise — it's what re-touching a specific spatial strip
 across nearly the entire non-spatial domain in a later pass would produce, on
 this coverage as much as any of the other 26.
 
+#### The census this raised got run — 209 of 273, not 26
+
+The `grep`/`uniq -c`-against-every-coverage sweep this section called for
+turned out not to need new dumps at all: `data/coverages_summary.csv`
+already carries `total_size_bytes` and `real_data_bytes` (the array's true
+size from its extents, independent of tiling) for all 273 live coverages,
+and their ratio is exactly the duplicate-index signal this section is built
+on — validated against `era5_4km_elevation`'s real dump (reads a clean
+1.0000×, correctly unaffected by that coverage's non-uniform-but-not-
+duplicated grid from Section 3.2) and `crrel_gipl_outputs_nc`'s (reads
+1.0327×, matching the 907 duplicates confirmed above to the byte).
+
+The real count: **209 of 273 coverages carry at least one duplicate index
+entry; 4,406.7 GB of phantom `totalSize` inflation server-wide.** Most of
+that is the already-known 26. What's new is 197 further coverages carrying
+146.6 GB between them, dominated by one cluster — 171 of the 178
+`cmip6_downscaled_*_v2_wcs` coverages sit at almost exactly the same
+inflation ratio (`1.0088×` or `1.0077×`), which reads like one shared batch
+step, not 171 independent accidents. Full breakdown, the reasoning, and
+commands to spot-check the new cluster against a real dump are in the audit
+doc's [Finding 1](rasdaman-tiling-audit.md#the-full-census--26-was-never-the-real-count);
+the census itself is `data/tile_duplicate_census.csv`.
+
 ---
 
 ## 4. Sizing a tile

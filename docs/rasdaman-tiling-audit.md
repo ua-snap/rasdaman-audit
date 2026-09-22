@@ -219,21 +219,88 @@ Not one of the 26 shows a `PhysicalSize` between the two figures, or above
 directly — see the [Method section](#method-and-what-these-numbers-do-not-prove)
 for the full query and how to run it.
 
-### The 26 is a lower bound, not a census
+### The full census — 26 was never the real count
 
-A 27th case, `crrel_gipl_outputs_nc`, turned up later from a full
-tile-domain dump pulled for an unrelated reason (see
-`CRREL_GIPL_tiling.md` section 7 and `rasdaman-tiling-guide.md` section 3.3)
-— 907 duplicate index entries out of 29,109, a 3.77 GB / ~3.3% gap between
-`totalSize` and `PhysicalSize`. The `totalSize`-vs-`PhysicalSize` sweep that
-found the 26 above never flagged it, because that gap is small next to the
-26's — the smallest of them, `era5_4km_daily_t2_mean`, still runs 1.32×
-inflated, while this one runs 1.03×. The sweep's threshold was tuned to the
-coverages losing the most, not to catch every duplicate index, so **26 is
-the count of coverages the sweep happened to notice, not necessarily the
-count that have this issue at all.** A coverage-by-coverage `grep | sort |
-uniq -c` pass (guide, Section 3.3) rather than a `totalSize`-based filter
-would be needed to get a real census, and hasn't been run.
+A 27th case, `crrel_gipl_outputs_nc`, turned up from a full tile-domain dump
+pulled for an unrelated reason (`CRREL_GIPL_tiling.md` section 7,
+guide Section 3.3) — 907 duplicate index entries out of 29,109, a 3.77 GB /
+~3.3% gap. That discovery raised an obvious question: if the sweep that found
+the 26 missed a case this close to the surface, how many more did it miss?
+
+It turns out the census didn't need any new `dbinfo` dumps to answer.
+`data/coverages_summary.csv` — built earlier in this audit for an unrelated
+reason (`scripts/rasdaman_tiling_audit.py`) — already carries, for all 273
+live coverages, both `total_size_bytes` (`dbinfo`'s `totalSize`, inflated by
+duplicate index entries) and `real_data_bytes` (the array's true size, `cells
+× bytes-per-cell`, computed from its extents rather than its tiling — see
+that script's `real_bytes` line). Their ratio,
+`storage_overhead_factor`, is exactly the `totalSize`/`PhysicalSize` signal
+this whole finding is built on, already computed, for every coverage, no
+server round trip required. It isn't confused by Section 3.2's boundary-grid
+finding either — `era5_4km_elevation`, which has 21 real, non-duplicated
+tiles instead of a naive 16, sits at exactly `1.0000` in this column, because
+its 21 tiles still partition the array exactly once each. A factor above 1.0
+in this column means duplicate index weight and nothing else, which is why
+it doubles as a full census: **`data/tile_duplicate_census.csv`**, derived
+directly from that column, sorted by severity, covers the question this
+finding could only answer for 27 coverages before.
+
+The real count: **209 of 273 live coverages (77%) carry at least one
+duplicate index entry. Only 64 have a clean, 1:1 index.** Total phantom
+`totalSize` inflation across all 273 is **4,406.7 GB** — most of it
+concentrated exactly where the original sweep already looked (the 26
+originally-named coverages account for roughly 4,490 GB on their own,
+comfortably covering the total; the arithmetic isn't exact because the 26
+were never listed exhaustively in this document, only illustrated). What the
+original sweep missed is real but numerically minor: 197 further coverages
+carry a combined 146.6 GB of inflation, most of it in one striking cluster —
+**171 of the 178 `cmip6_downscaled_*_v2_wcs` coverages** (every model,
+scenario, and variable combination in that family) sit at almost exactly
+`1.0088×` or `1.0077×`, together accounting for 34.1 GB. That uniformity
+across 171 independently-named coverages, all showing near-identical
+inflation ratios, reads like one shared batch step touching the same
+proportional slice of every array in the family — a single systematic cause,
+not 171 unrelated accidents — though this, like the `wcst_import` re-run
+theory generally, is not independently confirmed.
+
+None of this changes what to do about it: **nothing, for disk space** (below)
+still holds — `PhysicalSize` is the real number everywhere in this census,
+the same way it was for the original 26. What changes is the scope: this
+was never a 26-coverage problem, and a `totalSize`-based sweep alone will
+keep missing cases like the `cmip6_downscaled` cluster or
+`crrel_gipl_outputs_nc`, whose individual gaps are too small to sort near
+the top but too numerous, collectively, to ignore.
+
+#### Spot-checking the census against a real dump
+
+`storage_overhead_factor` has now been validated against a real
+`dbinfo(c,"printtiles=embedded")` dump for exactly two coverages —
+`era5_4km_elevation` (correctly reads clean, 1.0000×, despite its non-uniform
+grid) and `crrel_gipl_outputs_nc` (correctly reads 1.0327×, confirmed against
+907 real duplicate entries). It has not yet been checked against a real dump
+for any coverage in the large `cmip6_downscaled` cluster, which is the
+newest and most surprising part of this finding. Worth confirming before
+leaning on it further — pick one or two from the cluster and dump them
+directly:
+
+```bash
+for COLLECTION in cmip6_downscaled_tasmax_MIROC6_ssp245_v2_wcs cmip6_downscaled_pr_CESM2_historical_v2_wcs; do
+  curl -s -u rasadmin:$PASSWORD \
+    --data-urlencode "query=select dbinfo(c,\"printtiles=embedded\") from $COLLECTION as c" \
+    'https://zeus.snap.uaf.edu/rasdaman/rasql' -o "/tmp/${COLLECTION}_tiles.json"
+  echo "=== $COLLECTION ==="
+  grep -a -o '"\[[-0-9:,]*\]"' "/tmp/${COLLECTION}_tiles.json" | sort | uniq -c | sort -rn | head -3
+  grep -a -o '"\[[-0-9:,]*\]"' "/tmp/${COLLECTION}_tiles.json" | wc -l
+  grep -a -o '"\[[-0-9:,]*\]"' "/tmp/${COLLECTION}_tiles.json" | sort -u | wc -l
+done
+```
+
+The first `wc -l` is the indexed tile count, the second is the unique-domain
+count — the gap between them, times bytes-per-tile, should match that
+coverage's row in `data/tile_duplicate_census.csv` (`gap_bytes`). If it does
+for a couple of samples from the cluster, the rest of the 209 can be trusted
+without dumping all of them; if it doesn't, `real_data_bytes` needs a second
+look for that shape of coverage before the wider census is trusted.
 
 ### Why the duplication happens anyway
 
