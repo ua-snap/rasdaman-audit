@@ -157,19 +157,38 @@ storage accounting to begin with, which is a stronger claim than "padding
 costs nothing on disk once compressed" — there was no padding to compress.
 
 **What a non-dividing chunk size genuinely costs, then, is not wasted bytes —
-it's more, smaller tiles.** `era5_4km_elevation`'s 21 measured tiles against a
-naive `⌈460÷128⌉ × ⌈442÷128⌉ = 16` is itself an open question this correction
-surfaced rather than closed — we don't yet have this coverage's individual
-tile domains dumped to show why rasdaman produced 21 rather than 16, and
-until that's done, treat the exact tile-count mechanics at a boundary as
-unconfirmed. What's confirmed is the outcome: more index entries per read,
-more fetch-and-decompress round trips, and (per the still-valid Section 3.1
-logic) a boundary tile that happens to be *smaller* than its declared max is
-still indivisible — a query touching it still pays for the whole thing. The
-fix is the same as before for a different reason: pick chunk sizes that
-divide the axis where you can, and don't expect `REGULAR` to save you from
-this by itself — see Section 5 for what actually distinguishes it from
-`ALIGNED`.
+it's more, smaller tiles, and — newly confirmed below — a grid that isn't
+even uniformly shaped.** `era5_4km_elevation`'s 21 measured tiles against a
+naive `⌈460÷128⌉ × ⌈442÷128⌉ = 16` was an open question as of the last
+correction; it's now resolved, with a full tile-domain dump
+(`data/tile-dumps/era5_4km_elevation.json.gz`, obtained via
+`dbinfo(c,"printtiles=embedded")`) rather than inference from `totalSize`.
+The real grid is not "16 tiles, two of them shrunk." It's this:
+
+- **16 ordinary tiles** — a clean 4×4 grid, `128 × 128` everywhere except the
+  two edges, which shrink exactly as Section 3.2's opening quotes describe
+  (`X: 128,128,128,58`; `Y: 128,128,128,75`).
+- **5 more tiles from a single extra row.** `Y = 0` — one row, one cell
+  thick — was split off as its own tile-row, and *that* row's `X` axis was
+  chunked on completely different boundaries than every other row uses: `0:0,
+  1:128, 129:256, 257:384, 385:441` (a lone single-cell tile, then four
+  128-wide blocks *offset by one* from the main grid's `0:127, 128:255,
+  256:383, 384:441`) instead of joining the ordinary grid's first row.
+
+16 + 5 = 21, matching `dbinfo` exactly, and the 21 real domains' cell counts
+sum to precisely 203,320 — `460 × 442`, the array's true size, with zero
+overlap and zero gap. So both things are true at once: there is still no
+padding anywhere (confirming the conclusion above), and the grid genuinely
+isn't uniform — `ALIGNED` tiling can carve off a boundary row (or, as the
+worked example below shows, an even smaller corner) onto a different,
+offset partition rather than just shrinking it in place. What's confirmed as
+the practical outcome is unchanged from before: more index entries per read,
+more fetch-and-decompress round trips, and a boundary tile that's smaller
+than the declared max is still indivisible — a query touching it still pays
+for the whole thing. The fix is the same as before for a different reason:
+pick chunk sizes that divide the axis where you can, and don't expect
+`REGULAR` to save you from this by itself — see Section 5 for what actually
+distinguishes it from `ALIGNED`.
 
 The **19 of 22 / `design_freezing_index` at 0.56×** figures from the old
 version of this section have not been re-verified against the corrected
@@ -180,13 +199,15 @@ re-deriving them properly means re-checking `real_data_bytes` against
 checked in the audit's Method section, not against `totalSize`, which this
 whole correction has already shown is not a reliable disk figure.
 
-![One coverage, drawn to scale](figures/rasdaman-tile-padding.svg)
+![The real, measured tile grid: 21 tiles, no padding, not uniform](figures/rasdaman-tile-padding.svg)
 
-The figure above still illustrates the geometric fact correctly — a
-460 × 442 array tiled at 128 × 128 doesn't divide evenly, `⌈442÷128⌉ = 4` and
-`⌈460÷128⌉ = 4` — but its caption's "22% of every tile read is dead" and
-"compresses away on disk" framing carries the same error as the prose above
-and should be read with that in mind until it's redrawn.
+Redrawn 22 September 2026 directly from the dump above — every rectangle in
+the figure is a real tile domain, not a schematic. The 16 ordinary tiles are
+blue; the 5 tiles that make up the offset first row are amber.
+
+A near-identical pattern shows up independently in `crrel_gipl_outputs_nc`'s
+own dump — see below, and `CRREL_GIPL_tiling.md` section 7, which is where
+that investigation and this one converged.
 
 ### 3.3 Duplicate tile entries — a real index quirk, costing no real disk
 
@@ -350,6 +371,39 @@ carry duplicate entries. None of the 26 cost extra disk once you read
 `PhysicalSize` instead of `totalSize` — the worst of them,
 `tas_2km_projected_wcs`, reports 2,321.9 GB via `totalSize` and 313.3 GB via
 `PhysicalSize`, and 313.3 GB is the real number.
+
+#### A 27th coverage, found by a different route — the flagging test has a blind spot
+
+The 26 above were found by the `totalSize`-vs-`PhysicalSize` sweep across all
+273 coverages. `crrel_gipl_outputs_nc`'s full tile-domain dump (pulled while
+investigating Section 3.2's boundary question, not this one — see
+`CRREL_GIPL_tiling.md` section 7) turned up a 27th case that sweep never
+flagged: 29,109 indexed tile entries, but only 28,202 *unique* domains — 907
+duplicate entries. The signature is identical to every coverage above: the
+28,202 unique domains sum to exactly 115,109,064,000 bytes, matching
+`PhysicalSize` to the byte, while all 29,109 entries (duplicates included) sum
+to exactly 118,874,274,960 bytes, matching `totalSize` to the byte. Same
+mechanism, same proof, just a smaller gap — 3.77 GB, about 3.3% of the
+coverage's real size, against the 26 flagged coverages' median gap of well
+over 50%.
+
+That gap is exactly why the original sweep missed it: whatever threshold or
+sorting cut the flagged list at 26 was tuned for coverages losing hundreds of
+gigabytes to phantom inflation, not a few percent. It says nothing about
+whether 26 is the true count server-wide — it's the count of coverages whose
+`totalSize` inflation was large enough to stand out. A coverage with a small
+duplicate count, like this one, could easily hide inside `totalSize` numbers
+that look otherwise unremarkable. **If you want the true count, the sweep in
+Section 3.3's `grep`/`sort`/`uniq -c` command above needs to run against every
+coverage's dump, not just the ones `totalSize` already made suspicious.**
+
+The 907 duplicates aren't spread randomly either, which matters for the
+"re-run `wcst_import`" theory above: 599 of them sit at exactly one Y-block
+boundary (`Y = 672:713`) and appear in 599 of the coverage's 600
+time/model/scenario combinations; another 299 sit at `Y = 798:839` in 299 of
+the 600. That's not noise — it's what re-touching a specific spatial strip
+across nearly the entire non-spatial domain in a later pass would produce, on
+this coverage as much as any of the other 26.
 
 ---
 

@@ -219,6 +219,22 @@ Not one of the 26 shows a `PhysicalSize` between the two figures, or above
 directly — see the [Method section](#method-and-what-these-numbers-do-not-prove)
 for the full query and how to run it.
 
+### The 26 is a lower bound, not a census
+
+A 27th case, `crrel_gipl_outputs_nc`, turned up later from a full
+tile-domain dump pulled for an unrelated reason (see
+`CRREL_GIPL_tiling.md` section 7 and `rasdaman-tiling-guide.md` section 3.3)
+— 907 duplicate index entries out of 29,109, a 3.77 GB / ~3.3% gap between
+`totalSize` and `PhysicalSize`. The `totalSize`-vs-`PhysicalSize` sweep that
+found the 26 above never flagged it, because that gap is small next to the
+26's — the smallest of them, `era5_4km_daily_t2_mean`, still runs 1.32×
+inflated, while this one runs 1.03×. The sweep's threshold was tuned to the
+coverages losing the most, not to catch every duplicate index, so **26 is
+the count of coverages the sweep happened to notice, not necessarily the
+count that have this issue at all.** A coverage-by-coverage `grep | sort |
+uniq -c` pass (guide, Section 3.3) rather than a `totalSize`-based filter
+would be needed to get a real census, and hasn't been run.
+
 ### Why the duplication happens anyway
 
 The uneven copies-per-domain distribution is still the best clue, even though

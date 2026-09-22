@@ -163,16 +163,18 @@ a 2-D spatial block. Projected against this shape (same formulas as sections
 separate tiles), map amplification ≈1.02× — close to the theoretical floor,
 slightly better than the hand-designed scheme B below.
 
-**This is one observed domain, not a confirmed uniform grid.** Naively
-extending it — 42-row Y blocks, X and the three pinned axes at one block
-each — predicts `⌈1941÷42⌉ × 100 × 3 × 2 = 28,200` tiles; the measured count
-is 29,109, a gap of 909 that this single domain can't explain. Section 7
-folds a full tile-domain dump of this coverage into the same investigation as
-`era5_4km_elevation`'s (below), since the same open question — does
-`ALIGNED` produce a perfectly uniform grid, or something with genuine
-per-boundary variation — applies to both, and resolving it here also nails
-down the true current-state row of section 6's table rather than
-extrapolating from one sample.
+**Confirmed against the full tile-domain dump (section 7):** this single
+sampled domain is representative of 599 of the coverage's 600
+(time, model, scenario) combinations — chunk `1, 1, 1, 42, 2471` really is
+the ordinary shape. The naive extrapolation from it (`⌈1941÷42⌉ × 100 × 3 ×
+2 = 28,200` tiles) undercounts the real, measured 29,109 for two reasons,
+now both identified rather than lumped into one unexplained gap: one
+combination — `(time=0, model=0, scenario=0)` — uses a different, offset
+partition entirely (the same corner-splitting behavior `era5_4km_elevation`
+shows independently, section 7), and 907 of the 29,109 indexed entries are
+plain duplicate index entries (28,202 unique domains, not 28,200 or 29,109 —
+Finding 1's mechanism, guide Section 3.3, now confirmed on this coverage
+too). Section 7 has the full breakdown.
 
 ---
 
@@ -316,19 +318,22 @@ for section 5 — section 9 has a row for it.
 
 | Scheme | Chunk (time, model, scenario, Y, X) | Tile size | Total tiles | Point amp | Map amp |
 |---|---|---|---|---|---|
-| Current (as ingested) | 1, 1, 1, 42, 2471 (one observed domain — not confirmed uniform, section 7) | 4.16 MB observed / ≈4.08 MB measured avg | 29,109 measured (28,200 predicted from this one domain — 909 unexplained, section 7) | ≈62,600,000× | ≈1.02× |
+| Current (as ingested) | 1, 1, 1, 42, 2471 (599/600 combos; one combo offset — section 7) | 4.16 MB typical / 28,202 unique domains confirmed | 29,109 indexed (28,202 unique + 907 duplicate entries — section 7) | ≈62,600,000× | ≈1.02× |
 | A — WCS point/time-series | 100, 3, 2, 13, 13 | 3.87 MiB | 28,650 | **169×** | 606× |
 | B — WMS/map | 1, 1, 1, 323, 323 | 3.98 MiB | 33,600 | 62,600,000× | **1.22×** |
 | B′ — WMS/condense (30-step) | 30, 1, 1, 59, 59 | 3.98 MiB | 33,264 | not modelled (not its job) | 30.2× for a single slice; ≈1.2–2.4× for an aligned 30-step condense |
 
-The current scheme's numbers come from a single dumped tile domain (section
-3), projected with the same formulas as A and B — treat them as provisional
-until section 7's full domain dump either confirms this shape is uniform or
-shows what actually varies at the boundary. Read at face value, it's already
-close to map-optimal (barely better than the hand-designed scheme B, by
-sweeping X instead of chunking it) and just as bad for point queries as
-scheme B — meaning scheme A should be the one that shows the biggest
-before/after contrast when tested.
+The current scheme's numbers now come from the full tile-domain dump
+(section 7), not a single sample — confirmed, not provisional. Its
+amplification figures are unchanged from the single-sample projection
+because the sampled domain turned out to be the representative case; what
+the full dump added was the *why* behind the tile count (a genuine
+non-uniform corner plus 907 duplicate index entries, not one mysterious
+gap). Read at face value, the current scheme is already close to
+map-optimal (barely better than the hand-designed scheme B, by sweeping X
+instead of chunking it) and just as bad for point queries as scheme B —
+meaning scheme A should be the one that shows the biggest before/after
+contrast when tested.
 
 Disk usage is not a column here on purpose — per Finding 1, tile shape does
 not change it, and section 8 checks that directly rather than assuming it.
@@ -410,12 +415,63 @@ non-uniform subdivision at the boundary (worth pulling a handful of the
 largest and smallest domain extents out of the list by hand to see the
 actual shape rasdaman chose), not double-counting.
 
-Whichever it turns out to be, feed the answer back into three places: the
-guide's section 3.2 (replace "open question" with the confirmed mechanism),
-`rasdaman-tile-padding.svg` (redraw the figure — it currently still shows the
-old, disproven picture), and section 6's "Current (as ingested)" row above
-(replace the single-sample projection with real aggregate numbers computed
-from the full domain list).
+### Results — both dumps obtained, both discrepancies explained, and it's both mechanisms at once
+
+Josh ran the commands above and sent back both `.json.gz` files. Turns out
+each coverage's gap has a different cause — and `crrel_gipl_outputs_nc`
+actually shows *both* mechanisms, on the same array.
+
+**`era5_4km_elevation`: zero duplicates, genuinely non-uniform grid.** All 21
+domains are unique, and their cell counts sum to exactly 203,320 — `460 ×
+442`, the array's true size, no overlap, no gap. The real grid isn't "16
+tiles, boundary tiles shrunk." It's 16 ordinary tiles (a clean 4×4 grid,
+shrinking only at the two far edges as the guide's Section 3.2 quotes
+describe) *plus* 5 more tiles from a single extra row: `Y = 0`, one row, one
+cell thick, got split off on its own and chunked across `X` on boundaries
+offset by one from every other row (`0:0, 1:128, 129:256, 257:384, 385:441`
+instead of the main grid's `0:127, 128:255, 256:383, 384:441`). 16 + 5 = 21.
+No padding anywhere — confirming the guide's Section 3.2 correction — but a
+genuinely asymmetric grid, not a uniformly-shrunk one. This is now written up
+in the guide's Section 3.2, with the figure (`rasdaman-tile-padding.svg`)
+redrawn directly from this dump — every tile in it is real, not schematic.
+
+**`crrel_gipl_outputs_nc`: both the same corner-row quirk *and* real
+duplicate index entries.** The dump holds 29,109 domain strings but only
+28,202 are unique — 907 duplicates, all repeating exactly 2×. The 28,202
+unique domains form an exact, non-overlapping partition of the full
+2,877,726,600-cell array: their byte sum is 115,109,064,000, matching
+`PhysicalSize` (section 1) to the byte, while all 29,109 entries including
+duplicates sum to 118,874,274,960, matching this dump's own `totalSize`
+field to the byte. That is exactly Finding 1 / guide Section 3.3's
+duplicate-index signature — the same proof, on a coverage the original
+26-coverage sweep never flagged, because its gap (3.77 GB, ~3.3% of the
+coverage) is far smaller than what that sweep was tuned to catch. Full
+writeup, including why this matters for the sweep's coverage, is now in the
+guide's Section 3.3.
+
+The remaining 9 of the 907 duplicates, and a small non-uniformity in the
+grid, both trace back to exactly one of the coverage's 600 non-spatial
+(time, model, scenario) combinations: `(0, 0, 0)`. That combination alone
+uses an offset Y-partition — a lone `Y = 0:0` row split further into
+`X = 0:0` (one cell) and `X = 1:2470` (the rest), then 47 Y-blocks starting
+at `Y = 1` instead of `Y = 0` — the same corner-splitting behavior
+`era5_4km_elevation` shows, just on a 5-axis array instead of 2. Nine of
+*that* combination's 47 Y-blocks are themselves double-indexed. The other
+898 duplicates (599 at `Y = 672:713`, 299 at `Y = 798:839`) are spread across
+the other 599 combinations and don't touch the offset partition at all —
+plain, ordinary duplicate index entries, systematically concentrated at two
+specific Y-block boundaries rather than randomly scattered, which reads far
+more like a later ingest pass that re-touched those two spatial strips across
+nearly the whole time/model/scenario domain than like noise.
+
+**What this settles for the comparison table below:** the "current" scheme's
+real, full-domain tile count is 29,109 indexed entries / 28,202 unique
+tiles — the single sampled domain from section 3 turned out to be
+representative of the ordinary case (chunk `1,1,1,42,2471`, ~4.16 MB), just
+not of the `(0,0,0)` corner or the 907 duplicated entries layered on top of
+it. None of this changes section 1's storage-neutrality point — duplicate
+index entries and non-uniform grids both cost query-time index lookups, not
+disk, exactly as Finding 1 and Section 3.2 already established.
 
 ---
 
