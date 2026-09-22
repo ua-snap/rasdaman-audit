@@ -1,20 +1,8 @@
 # A worked tiling example: `crrel_gipl_outputs_nc`
 
-This is a full, reproducible worked example: one real coverage, two tiling
-schemes designed from scratch for two different access patterns, both held to
-rasdaman's 1–4 MB guidance, ready to be ingested as throwaway test coverages
-and timed against the original. It replaces the "Gridded permafrost dataset"
-example that used to live in `rasdaman-tiling-guide.md` section 7 — the guide
-now points here instead, because this version goes further: it designs a
-point-query scheme *and* a map-rendering scheme, both under a strict 4 MB
-target, and it ends with a place to record what actually happened when they
-were tested.
+This is a full, reproducible worked example: one real coverage, two tiling schemes designed from scratch for two different access patterns, both held to rasdaman's 1–4 MB guidance, ready to be ingested as throwaway test coverages and timed against the original. It replaces the "Gridded permafrost dataset" example that used to live in `rasdaman-tiling-guide.md` section 7 — the guide now points here instead, because this version goes further: it designs a point-query scheme *and* a map-rendering scheme, both under a strict 4 MB target, and it ends with a place to record what actually happened when they were tested.
 
-Everything below either comes from the `ncdump` Josh supplied, from the live
-ingest recipe (`rasdaman-ingest/ardac/gipl/ingest_with_nc.json`), or from
-`data/coverages_summary.csv` / `data/physical_sizes.csv` in this repo. Where a
-number needs a live query to confirm, the exact command is given so this can
-be re-run against the real server rather than trusted on faith.
+Everything below either comes from the `ncdump` Josh supplied, from the live ingest recipe (`rasdaman-ingest/ardac/gipl/ingest_with_nc.json`), or from `data/coverages_summary.csv` / `data/physical_sizes.csv` in this repo. Where a number needs a live query to confirm, the exact command is given so this can be re-run against the real server rather than trusted on faith.
 
 ---
 
@@ -46,41 +34,19 @@ variables:
 :crs = "EPSG:3338" ;
 ```
 
-Ten single-precision float bands, all sharing one `(time, model, scenario, y,
-x)` domain. Two numbers come straight out of this before anything else is
-decided:
+Ten single-precision float bands, all sharing one `(time, model, scenario, y, x)` domain. Two numbers come straight out of this before anything else is decided:
 
-**Bytes per cell is 40, not 4.** Rasdaman tiles the whole struct — every band
-— together. A tile's byte budget is `(cells in the tile) × (sum of every
-band's width)`. Sizing against one `float32` band undercounts the real
-footprint tenfold (guide, section 4).
+**Bytes per cell is 40, not 4.** Rasdaman tiles the whole struct — every band — together. A tile's byte budget is `(cells in the tile) × (sum of every band's width)`. Sizing against one `float32` band undercounts the real footprint tenfold (guide, section 4).
 
-**Total logical size is 115.109 GB** — `100 × 3 × 2 × 1941 × 2471 × 40`
-bytes. This is what every tiling scheme below is a rearrangement of. It does
-not change: tile shape is a read-performance decision, not a storage one
-(guide, section 6; audit, Finding 1). `RAS_MDDOBJECTS.PhysicalSize` for the
-live `crrel_gipl_outputs_nc` collection already reads 115,109,064,000 bytes —
-matching this exactly — so whatever the two new schemes below do to query
-speed, neither should move that number at all. That is itself worth
-confirming after ingest (section 8).
+**Total logical size is 115.109 GB** — `100 × 3 × 2 × 1941 × 2471 × 40` bytes. This is what every tiling scheme below is a rearrangement of. It does not change: tile shape is a read-performance decision, not a storage one (guide, section 6; audit, Finding 1). `RAS_MDDOBJECTS.PhysicalSize` for the live `crrel_gipl_outputs_nc` collection already reads 115,109,064,000 bytes — matching this exactly — so whatever the two new schemes below do to query speed, neither should move that number at all. That is itself worth confirming after ingest (section 8).
 
 ---
 
 ## 2. Find the *true* storage axis order — carefully, on this coverage
 
-This is the step the guide warns about most (section 9, "axis mismatch"), and
-`crrel_gipl_outputs_nc` is not a hypothetical case of it: it is one of the
-eleven catalogue disagreements this audit already flagged (Finding 4) —
-`data/coverages_summary.csv`'s row for this coverage carries the note `sdom
-disagrees with DescribeCoverage extent`. Concretely, `DescribeCoverage`
-reports `gml:axisLabels` as `model scenario time X Y`, but that is **not**
-the order the tiles are actually stored in. Trusting it here would silently
-attach every chunk size to the wrong axis — exactly the transposition bug
-worked through in the guide's old example, except this time it would happen
-*before* ingest instead of being caught after.
+This is the step the guide warns about most (section 9, "axis mismatch"), and `crrel_gipl_outputs_nc` is not a hypothetical case of it: it is one of the eleven catalogue disagreements this audit already flagged (Finding 4) — `data/coverages_summary.csv`'s row for this coverage carries the note `sdom disagrees with DescribeCoverage extent`. Concretely, `DescribeCoverage` reports `gml:axisLabels` as `model scenario time X Y`, but that is **not** the order the tiles are actually stored in. Trusting it here would silently attach every chunk size to the wrong axis — exactly the transposition bug worked through in the guide's old example, except this time it would happen *before* ingest instead of being caught after.
 
-The authoritative source is the ingest recipe's own declared `gridOrder`,
-which is what actually built the array:
+The authoritative source is the ingest recipe's own declared `gridOrder`, which is what actually built the array:
 
 ```bash
 grep -A2 '"gridOrder"' rasdaman-ingest/ardac/gipl/ingest_with_nc.json
@@ -94,10 +60,7 @@ grep -A2 '"gridOrder"' rasdaman-ingest/ardac/gipl/ingest_with_nc.json
 "X":        { "gridOrder": 4, ... }
 ```
 
-Storage order is **time, model, scenario, Y, X** — which happens to match the
-`ncdump` declaration order too (`time, model, scenario, y, x`), just not what
-`DescribeCoverage` reports. Cross-check it against the one thing that cannot
-lie about storage layout, `dbinfo`'s `sdom`:
+Storage order is **time, model, scenario, Y, X** — which happens to match the `ncdump` declaration order too (`time, model, scenario, y, x`), just not what `DescribeCoverage` reports. Cross-check it against the one thing that cannot lie about storage layout, `dbinfo`'s `sdom`:
 
 ```bash
 curl -u rasadmin:$PASSWORD \
@@ -109,13 +72,7 @@ curl -u rasadmin:$PASSWORD \
 [0:99,0:2,0:1,0:1940,0:2470]
 ```
 
-Sizes `100, 3, 2, 1941, 2471` in that position order — `time, model, scenario,
-Y, X` exactly, confirming the recipe's `gridOrder` and ruling out
-`DescribeCoverage`'s label order. **Every tiling bracket in this document is
-written in this order: `[time, model, scenario, Y, X]`.** If you re-run this
-exercise on a different coverage, redo this step first — don't assume
-`DescribeCoverage`'s axis order is safe to use, because on this exact
-coverage it isn't.
+Sizes `100, 3, 2, 1941, 2471` in that position order — `time, model, scenario, Y, X` exactly, confirming the recipe's `gridOrder` and ruling out `DescribeCoverage`'s label order. **Every tiling bracket in this document is written in this order: `[time, model, scenario, Y, X]`.** If you re-run this exercise on a different coverage, redo this step first — don't assume `DescribeCoverage`'s axis order is safe to use, because on this exact coverage it isn't.
 
 ---
 
@@ -127,14 +84,7 @@ The live recipe's tiling line:
 "tiling": "ALIGNED [0:*, 0:*, 0:*, 0:*, 0:*] tile size 4194304"
 ```
 
-All five axes wildcarded — this tells rasdaman "hit ~4 MB, you choose the
-shape," with no knowledge of whether the coverage is queried by point, by
-map, or both. `dbinfo` on the live coverage reports 29,109 tiles averaging
-≈4.08 MB each, close to the 4 MiB target. To see the actual shape rasdaman
-picked (how much of that budget went to time vs. Y vs. X), dump one domain —
-writing the response to a file first, rather than piping `curl` straight into
-`grep -o ... | head -1`, avoids both `curl`'s progress meter landing in the
-output and a broken-pipe error once `head` stops reading:
+All five axes wildcarded — this tells rasdaman "hit ~4 MB, you choose the shape," with no knowledge of whether the coverage is queried by point, by map, or both. `dbinfo` on the live coverage reports 29,109 tiles averaging ≈4.08 MB each, close to the 4 MiB target. To see the actual shape rasdaman picked (how much of that budget went to time vs. Y vs. X), dump one domain — writing the response to a file first, rather than piping `curl` straight into `grep -o ... | head -1`, avoids both `curl`'s progress meter landing in the output and a broken-pipe error once `head` stops reading:
 
 ```bash
 curl -s -u rasadmin:$PASSWORD \
@@ -150,43 +100,17 @@ Josh ran this and got:
 [98:98,2:2,0:0,0:41,0:2470]
 ```
 
-Read in `[time, model, scenario, Y, X]` order: time and model and scenario
-each pinned to one index, Y chunked to 42 rows, **X swept in full** (`0:2470`
-is all 2,471 columns). Chunk `(1, 1, 1, 42, 2471)` — `103,782` cells, `4.16 MB`
-— is under budget, and structurally it's much closer to a map-style tiling
-(non-spatial pinned, spatial large) than a point-style one, just an
-asymmetric band rather than a square: sweeping the *last* wildcarded axis in
-full and only partly chunking the one before it is consistent with rasdaman's
-`ALIGNED` algorithm filling axes in `gridOrder` sequence rather than packing
-a 2-D spatial block. Projected against this shape (same formulas as sections
-4–5): point amplification ≈62,600,000× (a time series would hit up to 600
-separate tiles), map amplification ≈1.02× — close to the theoretical floor,
-slightly better than the hand-designed scheme B below.
+Read in `[time, model, scenario, Y, X]` order: time and model and scenario each pinned to one index, Y chunked to 42 rows, **X swept in full** (`0:2470` is all 2,471 columns). Chunk `(1, 1, 1, 42, 2471)` — `103,782` cells, `4.16 MB` — is under budget, and structurally it's much closer to a map-style tiling (non-spatial pinned, spatial large) than a point-style one, just an asymmetric band rather than a square: sweeping the *last* wildcarded axis in full and only partly chunking the one before it is consistent with rasdaman's `ALIGNED` algorithm filling axes in `gridOrder` sequence rather than packing a 2-D spatial block. Projected against this shape (same formulas as sections 4–5): point amplification ≈62,600,000× (a time series would hit up to 600 separate tiles), map amplification ≈1.02× — close to the theoretical floor, slightly better than the hand-designed scheme B below.
 
-**Confirmed against the full tile-domain dump (section 7):** this single
-sampled domain is representative of 599 of the coverage's 600
-(time, model, scenario) combinations — chunk `1, 1, 1, 42, 2471` really is
-the ordinary shape. The naive extrapolation from it (`⌈1941÷42⌉ × 100 × 3 ×
-2 = 28,200` tiles) undercounts the real, measured 29,109 for two reasons,
-now both identified rather than lumped into one unexplained gap: one
-combination — `(time=0, model=0, scenario=0)` — uses a different, offset
-partition entirely (the same corner-splitting behavior `era5_4km_elevation`
-shows independently, section 7), and 907 of the 29,109 indexed entries are
-plain duplicate index entries (28,202 unique domains, not 28,200 or 29,109 —
-Finding 1's mechanism, guide Section 3.3, now confirmed on this coverage
-too). Section 7 has the full breakdown.
+**Confirmed against the full tile-domain dump (section 7):** this single sampled domain is representative of 599 of the coverage's 600 (time, model, scenario) combinations — chunk `1, 1, 1, 42, 2471` really is the ordinary shape. The naive extrapolation from it (`⌈1941÷42⌉ × 100 × 3 × 2 = 28,200` tiles) undercounts the real, measured 29,109 for two reasons, now both identified rather than lumped into one unexplained gap: one combination — `(time=0, model=0, scenario=0)` — uses a different, offset partition entirely (the same corner-splitting behavior `era5_4km_elevation` shows independently, section 7), and 907 of the 29,109 indexed entries are plain duplicate index entries (28,202 unique domains, not 28,200 or 29,109 — Finding 1's mechanism, guide Section 3.3, now confirmed on this coverage too). Section 7 has the full breakdown.
 
 ---
 
 ## 4. Designing a WCS point / time-series scheme
 
-**Access pattern:** pull one location's full time series (all 100 time
-steps), typically across all three models and both scenarios, one or a few
-bands. Guide section 6: keep every non-spatial axis whole, shrink the spatial
-footprint to fit the budget.
+**Access pattern:** pull one location's full time series (all 100 time steps), typically across all three models and both scenarios, one or a few bands. Guide section 6: keep every non-spatial axis whole, shrink the spatial footprint to fit the budget.
 
-Non-spatial cells per tile (time × model × scenario, all kept whole):
-`100 × 3 × 2 = 600`.
+Non-spatial cells per tile (time × model × scenario, all kept whole): `100 × 3 × 2 = 600`.
 
 Spatial budget at 40 bytes/cell:
 
@@ -195,10 +119,7 @@ budget = 4,194,304 ÷ (600 × 40) = 174 cells
 side    = floor(sqrt(174))       = 13
 ```
 
-(This is the same square-footprint method `scripts/build_workbook.py`'s
-`recommend()` uses for every other coverage in this audit — reusing it here
-keeps this example comparable to the rest of the repo rather than one-off
-math.)
+(This is the same square-footprint method `scripts/build_workbook.py`'s `recommend()` uses for every other coverage in this audit — reusing it here keeps this example comparable to the rest of the repo rather than one-off math.)
 
 | | |
 |---|---|
@@ -212,33 +133,17 @@ math.)
 "tiling": "ALIGNED [0:99, 0:2, 0:1, 0:12, 0:12] tile size 4056000"
 ```
 
-**Projected point amplification:** 169× (a single-point time series pulls a
-13×13 spatial neighborhood it didn't ask for — the unavoidable cost of a
-square tile, and already close to the practical floor demonstrated in the
-guide's `cmip6_fwi` example).
+**Projected point amplification:** 169× (a single-point time series pulls a 13×13 spatial neighborhood it didn't ask for — the unavoidable cost of a square tile, and already close to the practical floor demonstrated in the guide's `cmip6_fwi` example).
 
-**Projected map amplification if this same tiling were used to render a full
-frame:** ≈606× — assembling one map would touch all 28,650 tiles. This
-scheme is not for maps, and shouldn't be used to serve them.
+**Projected map amplification if this same tiling were used to render a full frame:** ≈606× — assembling one map would touch all 28,650 tiles. This scheme is not for maps, and shouldn't be used to serve them.
 
-Note 1941 and 2471 are each the product of two primes (`1941 = 3 × 647`,
-`2471 = 7 × 353`) with nothing near 13 — no `REGULAR` chunk size divides
-either axis close to this budget. That's the whole reason `ALIGNED` is used
-here, and it's a sufficient one on its own: `"irregular": true` on `time`,
-`model`, and `scenario` elsewhere in the recipe does **not** rule `REGULAR`
-out (that flag is about how petascope declares each axis's real-world CRS
-coordinates, not about the storage tiling bracket — see the guide, Section 5)
-— it just happens that `REGULAR` wouldn't have helped on these two spatial
-axes regardless, since there's no chunk size near budget that divides either
-one.
+Note 1941 and 2471 are each the product of two primes (`1941 = 3 × 647`, `2471 = 7 × 353`) with nothing near 13 — no `REGULAR` chunk size divides either axis close to this budget. That's the whole reason `ALIGNED` is used here, and it's a sufficient one on its own: `"irregular": true` on `time`, `model`, and `scenario` elsewhere in the recipe does **not** rule `REGULAR` out (that flag is about how petascope declares each axis's real-world CRS coordinates, not about the storage tiling bracket — see the guide, Section 5) — it just happens that `REGULAR` wouldn't have helped on these two spatial axes regardless, since there's no chunk size near budget that divides either one.
 
 ---
 
 ## 5. Designing a WMS / map-rendering scheme
 
-**Access pattern:** render one full spatial frame at a fixed time, model, and
-scenario — one band, one map. Guide section 6: pin every non-spatial axis to
-one index, make the spatial footprint as large as the budget allows.
+**Access pattern:** render one full spatial frame at a fixed time, model, and scenario — one band, one map. Guide section 6: pin every non-spatial axis to one index, make the spatial footprint as large as the budget allows.
 
 Non-spatial cells per tile: `1 × 1 × 1 = 1`.
 
@@ -259,31 +164,20 @@ side    = floor(sqrt(104,857))  = 323
 "tiling": "ALIGNED [0:0, 0:0, 0:0, 0:322, 0:322] tile size 4173160"
 ```
 
-**Projected map amplification:** ≈1.22× — rendering a full frame touches
-just 56 tiles and reads almost exactly the frame's own cell count. This is
-close to the theoretical floor (1×) and is what "large spatial footprint,
-non-spatial pinned to one" buys you.
+**Projected map amplification:** ≈1.22× — rendering a full frame touches just 56 tiles and reads almost exactly the frame's own cell count. This is close to the theoretical floor (1×) and is what "large spatial footprint, non-spatial pinned to one" buys you.
 
-**Projected point amplification if this same tiling were used for a time
-series:** ≈62,600,000× — a single point's 100-step time series would touch
-600 separate tiles (one per time/model/scenario combination), each dragging
-along a 323×323 spatial block it doesn't need. Do not point this scheme at
-point queries; it is built for exactly one job.
+**Projected point amplification if this same tiling were used for a time series:** ≈62,600,000× — a single point's 100-step time series would touch 600 separate tiles (one per time/model/scenario combination), each dragging along a 323×323 spatial block it doesn't need. Do not point this scheme at point queries; it is built for exactly one job.
 
 ### 5b. A variant worth testing: the condense window
 
-The live recipe's own WMS styles don't render single time slices — every
-`after_import` hook is a WCPS `condense` averaging **19 to 30 consecutive
-time steps** for one fixed model and scenario, e.g.:
+The live recipe's own WMS styles don't render single time slices — every `after_import` hook is a WCPS `condense` averaging **19 to 30 consecutive time steps** for one fixed model and scenario, e.g.:
 
 ```
 condense + over $t time(0:29) using $c[time($t), model(0), scenario(1)]
   .magt1m_degC / 30
 ```
 
-If that 19–30-step condense is the actual hot path (rather than a single-slice
-`GetMap`), pinning `time` to 1 forces each such request to touch up to 30
-separate tiles. Widening the time chunk to match:
+If that 19–30-step condense is the actual hot path (rather than a single-slice `GetMap`), pinning `time` to 1 forces each such request to touch up to 30 separate tiles. Widening the time chunk to match:
 
 ```
 budget = 4,194,304 ÷ (30 × 40) = 3,495 cells
@@ -302,15 +196,7 @@ side    = floor(sqrt(3,495))     = 59
 "tiling": "ALIGNED [0:29, 0:0, 0:0, 0:58, 0:58] tile size 4177200"
 ```
 
-A condense over `time(0:29)` lands inside one time-block and touches only the
-1,386 spatial tiles it needs. A condense over `time(19:48)` or `time(49:78)`
-straddles two 30-wide blocks (their start offsets aren't multiples of 30), so
-it costs up to 2× that — still far short of the 30× a time-chunk-of-1 scheme
-would force on every condensed style. This variant is a real trade against
-scheme B: worse for a genuine single-slice `GetMap` (30× the unwanted time
-data per tile instead of none), better for the condense styles this coverage
-actually ships today. Worth testing as a third candidate, not a replacement
-for section 5 — section 9 has a row for it.
+A condense over `time(0:29)` lands inside one time-block and touches only the 1,386 spatial tiles it needs. A condense over `time(19:48)` or `time(49:78)` straddles two 30-wide blocks (their start offsets aren't multiples of 30), so it costs up to 2× that — still far short of the 30× a time-chunk-of-1 scheme would force on every condensed style. This variant is a real trade against scheme B: worse for a genuine single-slice `GetMap` (30× the unwanted time data per tile instead of none), better for the condense styles this coverage actually ships today. Worth testing as a third candidate, not a replacement for section 5 — section 9 has a row for it.
 
 ---
 
@@ -323,49 +209,24 @@ for section 5 — section 9 has a row for it.
 | B — WMS/map | 1, 1, 1, 323, 323 | 3.98 MiB | 33,600 | 62,600,000× | **1.22×** |
 | B′ — WMS/condense (30-step) | 30, 1, 1, 59, 59 | 3.98 MiB | 33,264 | not modelled (not its job) | 30.2× for a single slice; ≈1.2–2.4× for an aligned 30-step condense |
 
-The current scheme's numbers now come from the full tile-domain dump
-(section 7), not a single sample — confirmed, not provisional. Its
-amplification figures are unchanged from the single-sample projection
-because the sampled domain turned out to be the representative case; what
-the full dump added was the *why* behind the tile count (a genuine
-non-uniform corner plus 907 duplicate index entries, not one mysterious
-gap). Read at face value, the current scheme is already close to
-map-optimal (barely better than the hand-designed scheme B, by sweeping X
-instead of chunking it) and just as bad for point queries as scheme B —
-meaning scheme A should be the one that shows the biggest before/after
-contrast when tested.
+The current scheme's numbers now come from the full tile-domain dump (section 7), not a single sample — confirmed, not provisional. Its amplification figures are unchanged from the single-sample projection because the sampled domain turned out to be the representative case; what the full dump added was the *why* behind the tile count (a genuine non-uniform corner plus 907 duplicate index entries, not one mysterious gap). Read at face value, the current scheme is already close to map-optimal (barely better than the hand-designed scheme B, by sweeping X instead of chunking it) and just as bad for point queries as scheme B — meaning scheme A should be the one that shows the biggest before/after contrast when tested.
 
-Disk usage is not a column here on purpose — per Finding 1, tile shape does
-not change it, and section 8 checks that directly rather than assuming it.
+Disk usage is not a column here on purpose — per Finding 1, tile shape does not change it, and section 8 checks that directly rather than assuming it.
 
 ---
 
 ## 7. Resolving the boundary-tile question
 
-Two open discrepancies point at the same underlying question — is `ALIGNED`
-producing a perfectly uniform grid, or is there real per-boundary variation
-(or duplicate tile-index entries) that a single sampled domain can't see?
+Two open discrepancies point at the same underlying question — is `ALIGNED` producing a perfectly uniform grid, or is there real per-boundary variation (or duplicate tile-index entries) that a single sampled domain can't see?
 
-- **`crrel_gipl_outputs_nc` itself** (section 3): one observed domain implies
-  28,200 tiles; the measured count is 29,109. A 909-tile gap.
-- **`era5_4km_elevation`** (guide, section 3.2): naive geometric tiling
-  implies 16 tiles (`⌈460÷128⌉ × ⌈442÷128⌉`); the measured count is 21. A
-  5-tile gap, on a coverage with only two axes and no catalogue-disagreement
-  complications — the cleanest possible test case for this question.
+- **`crrel_gipl_outputs_nc` itself** (section 3): one observed domain implies 28,200 tiles; the measured count is 29,109. A 909-tile gap.
+- **`era5_4km_elevation`** (guide, section 3.2): naive geometric tiling implies 16 tiles (`⌈460÷128⌉ × ⌈442÷128⌉`); the measured count is 21. A 5-tile gap, on a coverage with only two axes and no catalogue-disagreement complications — the cleanest possible test case for this question.
 
-Both need the same thing to resolve: not one sampled tile domain, but the
-*full* list of tile domains `dbinfo` holds for the coverage, so the actual
-per-tile extents can be inspected directly instead of extrapolated. That
-list lives at `tiling.tileDomains` in the JSON `dbinfo(c,"printtiles=embedded")`
-returns — the same field the three existing dumps in `data/tile-dumps/`
-already use (see `cmip6_fwi.json.gz` for the worked example in the guide).
+Both need the same thing to resolve: not one sampled tile domain, but the *full* list of tile domains `dbinfo` holds for the coverage, so the actual per-tile extents can be inspected directly instead of extrapolated. That list lives at `tiling.tileDomains` in the JSON `dbinfo(c,"printtiles=embedded")` returns — the same field the three existing dumps in `data/tile-dumps/` already use (see `cmip6_fwi.json.gz` for the worked example in the guide).
 
 ### Commands
 
-For each coverage, pull the full dump to a file first (same reasoning as
-section 3 — `-s` suppresses the progress meter, and writing to a file avoids
-a broken pipe on a response this size), then gzip it into
-`data/tile-dumps/` under the same naming convention as the existing files:
+For each coverage, pull the full dump to a file first (same reasoning as section 3 — `-s` suppresses the progress meter, and writing to a file avoids a broken pipe on a response this size), then gzip it into `data/tile-dumps/` under the same naming convention as the existing files:
 
 ```bash
 # era5_4km_elevation
@@ -381,14 +242,9 @@ curl -s -u rasadmin:$PASSWORD \
 gzip -c /tmp/crrel_gipl_outputs_nc_tiles.json > data/tile-dumps/crrel_gipl_outputs_nc.json.gz
 ```
 
-`crrel_gipl_outputs_nc`'s dump will be noticeably larger than the other three
-saved dumps (29,109 domain strings vs. cmip6_fwi's ~100K, but each string is
-longer at 5 axes instead of 2–4) — expect it to take longer than the section
-3 single-domain query and to produce a multi-megabyte file even compressed.
+`crrel_gipl_outputs_nc`'s dump will be noticeably larger than the other three saved dumps (29,109 domain strings vs. cmip6_fwi's ~100K, but each string is longer at 5 axes instead of 2–4) — expect it to take longer than the section 3 single-domain query and to produce a multi-megabyte file even compressed.
 
-Once both `.json.gz` files are in `data/tile-dumps/`, this check answers the
-open question directly — same field access as sections 3 and 6, generalized
-to the whole list instead of one entry:
+Once both `.json.gz` files are in `data/tile-dumps/`, this check answers the open question directly — same field access as sections 3 and 6, generalized to the whole list instead of one entry:
 
 ```bash
 python3 -c "
@@ -405,80 +261,25 @@ for name in ['era5_4km_elevation', 'crrel_gipl_outputs_nc']:
 "
 ```
 
-If `duplicates` is nonzero, that's the same mechanism Finding 1 documents for
-the 26 flagged coverages, showing up here too — meaning it isn't confined to
-the coverages already flagged, and this repo's duplicate-detection sweep
-(guide, Finding 1's methodology) may need to be re-run without the filter
-that limited it to those 26. If `duplicates` is zero and the unique count
-still exceeds the naive geometric prediction, the explanation is genuine
-non-uniform subdivision at the boundary (worth pulling a handful of the
-largest and smallest domain extents out of the list by hand to see the
-actual shape rasdaman chose), not double-counting.
+If `duplicates` is nonzero, that's the same mechanism Finding 1 documents for the 26 flagged coverages, showing up here too — meaning it isn't confined to the coverages already flagged, and this repo's duplicate-detection sweep (guide, Finding 1's methodology) may need to be re-run without the filter that limited it to those 26. If `duplicates` is zero and the unique count still exceeds the naive geometric prediction, the explanation is genuine non-uniform subdivision at the boundary (worth pulling a handful of the largest and smallest domain extents out of the list by hand to see the actual shape rasdaman chose), not double-counting.
 
 ### Results — both dumps obtained, both discrepancies explained, and it's both mechanisms at once
 
-Josh ran the commands above and sent back both `.json.gz` files. Turns out
-each coverage's gap has a different cause — and `crrel_gipl_outputs_nc`
-actually shows *both* mechanisms, on the same array.
+Josh ran the commands above and sent back both `.json.gz` files. Turns out each coverage's gap has a different cause — and `crrel_gipl_outputs_nc` actually shows *both* mechanisms, on the same array.
 
-**`era5_4km_elevation`: zero duplicates, genuinely non-uniform grid.** All 21
-domains are unique, and their cell counts sum to exactly 203,320 — `460 ×
-442`, the array's true size, no overlap, no gap. The real grid isn't "16
-tiles, boundary tiles shrunk." It's 16 ordinary tiles (a clean 4×4 grid,
-shrinking only at the two far edges as the guide's Section 3.2 quotes
-describe) *plus* 5 more tiles from a single extra row: `Y = 0`, one row, one
-cell thick, got split off on its own and chunked across `X` on boundaries
-offset by one from every other row (`0:0, 1:128, 129:256, 257:384, 385:441`
-instead of the main grid's `0:127, 128:255, 256:383, 384:441`). 16 + 5 = 21.
-No padding anywhere — confirming the guide's Section 3.2 correction — but a
-genuinely asymmetric grid, not a uniformly-shrunk one. This is now written up
-in the guide's Section 3.2, with the figure (`rasdaman-tile-padding.svg`)
-redrawn directly from this dump — every tile in it is real, not schematic.
+**`era5_4km_elevation`: zero duplicates, genuinely non-uniform grid.** All 21 domains are unique, and their cell counts sum to exactly 203,320 — `460 × 442`, the array's true size, no overlap, no gap. The real grid isn't "16 tiles, boundary tiles shrunk." It's 16 ordinary tiles (a clean 4×4 grid, shrinking only at the two far edges as the guide's Section 3.2 quotes describe) *plus* 5 more tiles from a single extra row: `Y = 0`, one row, one cell thick, got split off on its own and chunked across `X` on boundaries offset by one from every other row (`0:0, 1:128, 129:256, 257:384, 385:441` instead of the main grid's `0:127, 128:255, 256:383, 384:441`). 16 + 5 = 21. No padding anywhere — confirming the guide's Section 3.2 correction — but a genuinely asymmetric grid, not a uniformly-shrunk one. This is now written up in the guide's Section 3.2, with the figure (`rasdaman-tile-padding.svg`) redrawn directly from this dump — every tile in it is real, not schematic.
 
-**`crrel_gipl_outputs_nc`: both the same corner-row quirk *and* real
-duplicate index entries.** The dump holds 29,109 domain strings but only
-28,202 are unique — 907 duplicates, all repeating exactly 2×. The 28,202
-unique domains form an exact, non-overlapping partition of the full
-2,877,726,600-cell array: their byte sum is 115,109,064,000, matching
-`PhysicalSize` (section 1) to the byte, while all 29,109 entries including
-duplicates sum to 118,874,274,960, matching this dump's own `totalSize`
-field to the byte. That is exactly Finding 1 / guide Section 3.3's
-duplicate-index signature — the same proof, on a coverage the original
-26-coverage sweep never flagged, because its gap (3.77 GB, ~3.3% of the
-coverage) is far smaller than what that sweep was tuned to catch. Full
-writeup, including why this matters for the sweep's coverage, is now in the
-guide's Section 3.3.
+**`crrel_gipl_outputs_nc`: both the same corner-row quirk *and* real duplicate index entries.** The dump holds 29,109 domain strings but only 28,202 are unique — 907 duplicates, all repeating exactly 2×. The 28,202 unique domains form an exact, non-overlapping partition of the full 2,877,726,600-cell array: their byte sum is 115,109,064,000, matching `PhysicalSize` (section 1) to the byte, while all 29,109 entries including duplicates sum to 118,874,274,960, matching this dump's own `totalSize` field to the byte. That is exactly Finding 1 / guide Section 3.3's duplicate-index signature — the same proof, on a coverage the original 26-coverage sweep never flagged, because its gap (3.77 GB, ~3.3% of the coverage) is far smaller than what that sweep was tuned to catch. Full writeup, including why this matters for the sweep's coverage, is now in the guide's Section 3.3.
 
-The remaining 9 of the 907 duplicates, and a small non-uniformity in the
-grid, both trace back to exactly one of the coverage's 600 non-spatial
-(time, model, scenario) combinations: `(0, 0, 0)`. That combination alone
-uses an offset Y-partition — a lone `Y = 0:0` row split further into
-`X = 0:0` (one cell) and `X = 1:2470` (the rest), then 47 Y-blocks starting
-at `Y = 1` instead of `Y = 0` — the same corner-splitting behavior
-`era5_4km_elevation` shows, just on a 5-axis array instead of 2. Nine of
-*that* combination's 47 Y-blocks are themselves double-indexed. The other
-898 duplicates (599 at `Y = 672:713`, 299 at `Y = 798:839`) are spread across
-the other 599 combinations and don't touch the offset partition at all —
-plain, ordinary duplicate index entries, systematically concentrated at two
-specific Y-block boundaries rather than randomly scattered, which reads far
-more like a later ingest pass that re-touched those two spatial strips across
-nearly the whole time/model/scenario domain than like noise.
+The remaining 9 of the 907 duplicates, and a small non-uniformity in the grid, both trace back to exactly one of the coverage's 600 non-spatial (time, model, scenario) combinations: `(0, 0, 0)`. That combination alone uses an offset Y-partition — a lone `Y = 0:0` row split further into `X = 0:0` (one cell) and `X = 1:2470` (the rest), then 47 Y-blocks starting at `Y = 1` instead of `Y = 0` — the same corner-splitting behavior `era5_4km_elevation` shows, just on a 5-axis array instead of 2. Nine of *that* combination's 47 Y-blocks are themselves double-indexed. The other 898 duplicates (599 at `Y = 672:713`, 299 at `Y = 798:839`) are spread across the other 599 combinations and don't touch the offset partition at all — plain, ordinary duplicate index entries, systematically concentrated at two specific Y-block boundaries rather than randomly scattered, which reads far more like a later ingest pass that re-touched those two spatial strips across nearly the whole time/model/scenario domain than like noise.
 
-**What this settles for the comparison table below:** the "current" scheme's
-real, full-domain tile count is 29,109 indexed entries / 28,202 unique
-tiles — the single sampled domain from section 3 turned out to be
-representative of the ordinary case (chunk `1,1,1,42,2471`, ~4.16 MB), just
-not of the `(0,0,0)` corner or the 907 duplicated entries layered on top of
-it. None of this changes section 1's storage-neutrality point — duplicate
-index entries and non-uniform grids both cost query-time index lookups, not
-disk, exactly as Finding 1 and Section 3.2 already established.
+**What this settles for the comparison table below:** the "current" scheme's real, full-domain tile count is 29,109 indexed entries / 28,202 unique tiles — the single sampled domain from section 3 turned out to be representative of the ordinary case (chunk `1,1,1,42,2471`, ~4.16 MB), just not of the `(0,0,0)` corner or the 907 duplicated entries layered on top of it. None of this changes section 1's storage-neutrality point — duplicate index entries and non-uniform grids both cost query-time index lookups, not disk, exactly as Finding 1 and Section 3.2 already established.
 
 ---
 
 ## 8. Standing these up as test coverages
 
-Two throwaway coverages, same source file, same everything except
-`coverage_id` and `tiling`:
+Two throwaway coverages, same source file, same everything except `coverage_id` and `tiling`:
 
 ```bash
 cp rasdaman-ingest/ardac/gipl/ingest_with_nc.json /tmp/gipl_point_test.json
@@ -487,22 +288,12 @@ cp rasdaman-ingest/ardac/gipl/ingest_with_nc.json /tmp/gipl_map_test.json
 
 In each copy:
 
-- Change `input.coverage_id` — e.g. `crrel_gipl_point_test` and
-  `crrel_gipl_map_test` (and a third, `crrel_gipl_condense_test`, for
-  section 5b if you test it too).
-- Replace `recipe.options.tiling` with the corresponding bracket from section
-  4, 5, or 5b above.
-- Delete the `hooks` array in both copies — those `curl` calls register WMS
-  styles against `crrel_gipl_outputs_nc` by name; left in, they'd either fail
-  (wrong coverage ID) or silently attach styles to the wrong coverage. Add a
-  plain default style by hand afterward if you want to `GetMap` against the
-  map-test coverage directly.
-- For the point-test coverage, `wms_import` can come out entirely — it isn't
-  going to be queried through WMS.
+- Change `input.coverage_id` — e.g. `crrel_gipl_point_test` and `crrel_gipl_map_test` (and a third, `crrel_gipl_condense_test`, for section 5b if you test it too).
+- Replace `recipe.options.tiling` with the corresponding bracket from section 4, 5, or 5b above.
+- Delete the `hooks` array in both copies — those `curl` calls register WMS styles against `crrel_gipl_outputs_nc` by name; left in, they'd either fail (wrong coverage ID) or silently attach styles to the wrong coverage. Add a plain default style by hand afterward if you want to `GetMap` against the map-test coverage directly.
+- For the point-test coverage, `wms_import` can come out entirely — it isn't going to be queried through WMS.
 
-Then ingest each with `wcst_import.sh` as usual, and — before doing any
-timing — confirm the disk-neutrality claim directly rather than assuming it
-carries over from Finding 1's retrospective cases to a fresh ingest:
+Then ingest each with `wcst_import.sh` as usual, and — before doing any timing — confirm the disk-neutrality claim directly rather than assuming it carries over from Finding 1's retrospective cases to a fresh ingest:
 
 ```sql
 sqlite3 -readonly /opt/rasdaman/data/RASBASE "
@@ -514,37 +305,29 @@ SELECT cn.MDDCollName, sum(o.PhysicalSize) physical_bytes
    ('crrel_gipl_outputs_nc', 'crrel_gipl_point_test', 'crrel_gipl_map_test');"
 ```
 
-All three should read 115,109,064,000. If they don't, something about this
-coverage breaks Finding 1's "tile shape is storage-neutral" claim and that is
-more important than the timing results below.
+All three should read 115,109,064,000. If they don't, something about this coverage breaks Finding 1's "tile shape is storage-neutral" claim and that is more important than the timing results below.
 
 ---
 
 ## 9. Testing — TBD
 
-Not run yet. Record wall-clock time (median of a few runs, not one) for each
-query against `crrel_gipl_outputs_nc` (current), `crrel_gipl_point_test`
-(scheme A), and `crrel_gipl_map_test` (scheme B) — and `crrel_gipl_condense_test`
-(scheme B′) if it gets built.
+Not run yet. Record wall-clock time (median of a few runs, not one) for each query against `crrel_gipl_outputs_nc` (current), `crrel_gipl_point_test` (scheme A), and `crrel_gipl_map_test` (scheme B) — and `crrel_gipl_condense_test` (scheme B′) if it gets built.
 
-**Representative point/time-series query** — one location, full time series,
-one band:
+**Representative point/time-series query** — one location, full time series, one band:
 
 ```
 for $c in (crrel_gipl_outputs_nc)
 return encode($c[Y(1000), X(1200)].magt1m_degC, "csv")
 ```
 
-**Representative map query** — one full frame, one band, fixed time/model/
-scenario:
+**Representative map query** — one full frame, one band, fixed time/model/ scenario:
 
 ```
 for $c in (crrel_gipl_outputs_nc)
 return encode($c[time(50), model(0), scenario(1)].magt1m_degC, "png")
 ```
 
-**Representative condense query** — the actual production pattern from the
-recipe's `after_import` hooks (scheme B′'s target case):
+**Representative condense query** — the actual production pattern from the recipe's `after_import` hooks (scheme B′'s target case):
 
 ```
 for $c in (crrel_gipl_outputs_nc)
@@ -564,12 +347,4 @@ TBD — fill in after running.
 
 ## Sources
 
-`ncdump -h` output (Josh, this conversation) for the source array shape and
-bands; `rasdaman-ingest/ardac/gipl/ingest_with_nc.json` for the live
-`gridOrder`, current tiling string, and the WMS style hooks quoted in section
-5b; `data/coverages_summary.csv` for the `sdom`-vs-`DescribeCoverage`
-disagreement flag and the measured tile count; `data/physical_sizes.csv` for
-the 115,109,064,000-byte `PhysicalSize` baseline. Chunk-sizing methodology
-mirrors `scripts/build_workbook.py`'s `recommend()` function and
-`rasdaman-tiling-guide.md` sections 4 and 6 — see those for the general case
-this document applies to one specific coverage.
+`ncdump -h` output (Josh, this conversation) for the source array shape and bands; `rasdaman-ingest/ardac/gipl/ingest_with_nc.json` for the live `gridOrder`, current tiling string, and the WMS style hooks quoted in section 5b; `data/coverages_summary.csv` for the `sdom`-vs-`DescribeCoverage` disagreement flag and the measured tile count; `data/physical_sizes.csv` for the 115,109,064,000-byte `PhysicalSize` baseline. Chunk-sizing methodology mirrors `scripts/build_workbook.py`'s `recommend()` function and `rasdaman-tiling-guide.md` sections 4 and 6 — see those for the general case this document applies to one specific coverage.
