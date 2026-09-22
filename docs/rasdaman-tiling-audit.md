@@ -281,10 +281,38 @@ grid) and `crrel_gipl_outputs_nc` (correctly reads 1.0327×, confirmed against
 for any coverage in the large `cmip6_downscaled` cluster, which is the
 newest and most surprising part of this finding. Worth confirming before
 leaning on it further — pick one or two from the cluster and dump them
-directly:
+directly.
+
+**One thing this cluster makes newly relevant: `rasql` queries the raw
+`rasdaman` collection layer, and for most of the 178 `cmip6_downscaled_*`
+coverages — 177 of them — that name is not the petascope coverage ID used
+everywhere else in this document. `data/coverages_summary.csv`'s
+`collection_used` column already carries the real name for every coverage
+(the same distinction the guide's Section 3.3 first ran into with
+`cmip6_fwi`'s timestamp-suffixed collection name); 186 of the 273 coverages
+have this note, so this isn't a `cmip6_downscaled`-only quirk.** Look the
+real name up before dumping rather than assuming coverage ID and collection
+name match:
 
 ```bash
-for COLLECTION in cmip6_downscaled_tasmax_MIROC6_ssp245_v2_wcs cmip6_downscaled_pr_CESM2_historical_v2_wcs; do
+python3 -c "
+import csv
+with open('data/coverages_summary.csv') as f:
+    rows = {r['coverage_id']: r['collection_used'] for r in csv.DictReader(f)}
+for cid in ['cmip6_downscaled_tasmax_MIROC6_ssp245_v2_wcs', 'cmip6_downscaled_pr_CESM2_historical_v2_wcs']:
+    print(cid, '->', rows[cid])
+"
+```
+
+```
+cmip6_downscaled_tasmax_MIROC6_ssp245_v2_wcs -> cmip6_downscaled_tasmax_MIROC6_ssp245_wcs_v2
+cmip6_downscaled_pr_CESM2_historical_v2_wcs -> cmip6_downscaled_pr_CESM2_historical_wcs_v2
+```
+
+Then dump using the real collection name, not the coverage ID:
+
+```bash
+for COLLECTION in cmip6_downscaled_tasmax_MIROC6_ssp245_wcs_v2 cmip6_downscaled_pr_CESM2_historical_wcs_v2; do
   curl -s -u rasadmin:$PASSWORD \
     --data-urlencode "query=select dbinfo(c,\"printtiles=embedded\") from $COLLECTION as c" \
     'https://zeus.snap.uaf.edu/rasdaman/rasql' -o "/tmp/${COLLECTION}_tiles.json"
@@ -297,10 +325,43 @@ done
 
 The first `wc -l` is the indexed tile count, the second is the unique-domain
 count — the gap between them, times bytes-per-tile, should match that
-coverage's row in `data/tile_duplicate_census.csv` (`gap_bytes`). If it does
-for a couple of samples from the cluster, the rest of the 209 can be trusted
-without dumping all of them; if it doesn't, `real_data_bytes` needs a second
-look for that shape of coverage before the wider census is trusted.
+coverage's row in `data/tile_duplicate_census.csv` (`gap_bytes`, keyed by
+`coverage_id`, not `collection_used`). If it does for a couple of samples
+from the cluster, the rest of the 209 can be trusted without dumping all of
+them; if it doesn't, `real_data_bytes` needs a second look for that shape of
+coverage before the wider census is trusted.
+
+**Run and confirmed, 22 September 2026.** Both samples check out exactly —
+computed `totalSize` (summing every indexed entry, duplicates included) and
+`real_data_bytes` (summing unique domains only) both matched the census and
+`dbinfo`'s own fields to the byte, for both coverages:
+
+| coverage | indexed | unique | `totalSize` match | unique-domain bytes match |
+|---|---|---|---|---|
+| `cmip6_downscaled_tasmax_MIROC6_ssp245_v2_wcs` | 1,956 | 1,891 | exact | exact |
+| `cmip6_downscaled_pr_CESM2_historical_v2_wcs` | 1,222 | 1,186 | exact | exact |
+
+The census is confirmed, not just for these two but as a method — `data/tile_duplicate_census.csv`
+can be trusted server-wide without dumping the other 207.
+
+It also surfaced something sharper than "duplicates exist": in both
+coverages, the duplicated tiles are disproportionately concentrated at
+`time = 0` — literally the first index along the coverage's leading
+(`gridOrder`-0) axis. `cmip6_downscaled_tasmax_...`: 51 of the 226 tiles
+covering `time=0` are duplicated (22.6%), versus 14 of the other 1,665
+(0.8%). `cmip6_downscaled_pr_...`: 29 of 226 at `time=0` (12.8%) versus 7 of
+960 elsewhere (0.7%). The `time=0` slice is also tiled completely
+differently from the rest of the array — a clean 32×32 spatial grid matching
+the declared tile configuration exactly, while every other time step is
+folded into tiles that sweep almost the entire multi-decade time axis at
+once and chunk space down to a few cells wide to compensate. That's not
+noise, and it's not new to this coverage: it's the same "first index treated
+specially" signature `era5_4km_elevation`'s corner-row split and
+`crrel_gipl_outputs_nc`'s `(time=0, model=0, scenario=0)` combo both showed
+independently (Section 3.2 above, and `CRREL_GIPL_tiling.md` section 7). Four
+coverages checked with a full dump so far, four for four on the first slice
+along the primary axis being where the anomaly lives — see the guide's
+Section 3.3 for the updated theory this points to.
 
 ### Why the duplication happens anyway
 

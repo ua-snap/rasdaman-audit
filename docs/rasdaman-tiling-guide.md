@@ -332,17 +332,36 @@ A sixteen-fold difference in tile count, and the byte totals — this time
 and neither does a duplicated index entry.** Choose your tiling for query
 performance and ignore storage entirely when making that decision.
 
-#### Why the duplication happens anyway
+#### Why the duplication happens anyway — sharpened 22 September 2026
 
 The uneven copies-per-domain distribution is the clue, even though it no
 longer points at a disk cost. A region touched by one write has one index
 entry; a region touched by four writes has four. The working explanation —
-**not independently confirmed, flagged as such since the first draft of this
-guide** — is that `wcst_import` was re-run against a coverage that already
-existed, each pass adding another index entry for the tiles it touched
-instead of replacing the existing one. It fits the pattern across the server:
-coverages ingested once sit at a clean 1×; the `_wcs` variants, tuned and
-re-run during development, carry the duplicates.
+still **not independently confirmed** against `wcst_import`'s own source,
+which isn't reachable from here — is that it was re-run against a coverage
+that already existed, each pass adding another index entry for the tiles it
+touched instead of replacing the existing one. It fits the pattern across the
+server: coverages ingested once sit at a clean 1×; the `_wcs` variants, tuned
+and re-run during development, carry the duplicates.
+
+What's new is *where* the extra writes land, and it's the same place in
+every coverage checked with a full domain dump so far — four for four:
+`era5_4km_elevation`, `crrel_gipl_outputs_nc`, and (audit doc, Finding 1)
+`cmip6_downscaled_tasmax_MIROC6_ssp245_v2_wcs` and
+`cmip6_downscaled_pr_CESM2_historical_v2_wcs` all show something anomalous
+specifically at the *first index along the coverage's leading (`gridOrder`-0)
+axis* — a lone extra tile-row (era5), an offset partition plus 9 of its own
+47 tiles double-indexed (crrel, at `time=0`), and now 22.6% and 12.8% of the
+tiles covering `time=0` duplicated versus under 1% everywhere else, in two
+completely unrelated CMIP6 coverages with a `time=0` slice tiled on a
+different spatial grid than the rest of the array entirely. That's a much
+more specific target than "re-run at some point" — it points at whatever
+`wcst_import` (or rasdaman's `ALIGNED` tiling itself) does differently for
+the very first slice along the primary axis, plausibly some kind of
+bootstrap or initialization write that's structurally separate from the bulk
+import and can end up re-touched independently of it. Still a theory, not a
+confirmed mechanism, but now a specific and testable one rather than a
+generic "something got re-run somewhere."
 
 #### What this means for tiling decisions, and for the index
 
