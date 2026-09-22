@@ -92,9 +92,13 @@ It depends entirely on whether the tile's shape resembles the query's shape.
 
 ![The same array, tiled two ways](figures/rasdaman-tile-shape.svg)
 
-Our permafrost coverage `crrel_gipl_outputs_nc` makes the point. It is
-100 × 3 × 2 × 1941 × 2471 cells — 2,877,726,600 in total — and its tile spans
-the *entire array*. So every query, whatever it asks for, reads all of it:
+Our permafrost coverage `crrel_gipl_outputs_nc` makes the point — not as it is
+actually tiled today (that's an unremarkable auto-`ALIGNED` 4 MB split; see
+[`CRREL_GIPL_tiling.md`](CRREL_GIPL_tiling.md) for the real, measured shape),
+but as a hypothetical extreme that isolates the arithmetic cleanly: imagine
+its 100 × 3 × 2 × 1941 × 2471 cells — 2,877,726,600 in total — tiled as *one
+single tile spanning the entire array*. Every query, whatever it asks for,
+would read all of it:
 
 | Query | Wants | Reads | Amplification |
 |---|---|---|---|
@@ -119,40 +123,87 @@ The rule that follows: **keep the axes a query sweeps inside one tile, and chunk
 the axes it pins.** For a point time series, that means the whole time axis in
 one tile and a small spatial footprint.
 
-### 3.2 Padding — real, but cheaper than it looks
+### 3.2 Boundary tiles — corrected 22 September 2026
 
-A tile grid has to cover the array, so unless every axis divides evenly by its
-chunk size, the grid overruns the edges. Those boundary tiles are materialised
-at full size regardless.
+**This section previously said the wrong thing about what happens at the
+edges, and this correction was found the same way Finding 1 was: by checking
+an assumption against rasdaman's own documentation and against this server's
+actual measured numbers, rather than trusting it because it sounded
+plausible.** The old version claimed a tile grid that doesn't divide the
+array evenly gets built at full declared size anyway, with the overhang
+zero-filled, and that this padding "compresses away" on disk. Rasdaman's own
+Query Language Guide says the opposite, for both tiling strategies:
+
+> "This line below dictates, for a 2-D MDD, tiles to be of size 1024 x 1024,
+> **except for border tiles (which can be smaller)**." — *Storage Layout
+> Language*, Regular Tiling
+
+> "The upper array limits constitute an exception: for filling the remaining
+> gap (which usually occurs) **tiles can be smaller** and deviate from the
+> configuration sizings." — *Storage Layout Language*, Aligned Tiling
+
+Neither section mentions zero-fill or padding at all. Both describe boundary
+tiles shrinking to fit, not being built oversized and padded.
+
+This server's own data backs the documentation, not the old claim. The
+guide's own flagship example, `era5_4km_elevation` (460 × 442 cells, `ALIGNED`
+tiling with a 128 × 128 target), is `dbinfo`-measured at 21 tiles totalling
+**exactly 813,280 bytes** — precisely `460 × 442 × 4` bytes, the coverage's
+true, unpadded logical size, with `PhysicalSize` matching it exactly too. If
+boundary tiles were padded to the full 128 × 128 declared size, the tile
+index would sum to `21 × 65,536 = 1,376,256` bytes — 69% more than what it
+actually reports. It doesn't. There is no padding baked into this coverage's
+storage accounting to begin with, which is a stronger claim than "padding
+costs nothing on disk once compressed" — there was no padding to compress.
+
+**What a non-dividing chunk size genuinely costs, then, is not wasted bytes —
+it's more, smaller tiles.** `era5_4km_elevation`'s 21 measured tiles against a
+naive `⌈460÷128⌉ × ⌈442÷128⌉ = 16` is itself an open question this correction
+surfaced rather than closed — we don't yet have this coverage's individual
+tile domains dumped to show why rasdaman produced 21 rather than 16, and
+until that's done, treat the exact tile-count mechanics at a boundary as
+unconfirmed. What's confirmed is the outcome: more index entries per read,
+more fetch-and-decompress round trips, and (per the still-valid Section 3.1
+logic) a boundary tile that happens to be *smaller* than its declared max is
+still indivisible — a query touching it still pays for the whole thing. The
+fix is the same as before for a different reason: pick chunk sizes that
+divide the axis where you can, and don't expect `REGULAR` to save you from
+this by itself — see Section 5 for what actually distinguishes it from
+`ALIGNED`.
+
+The **19 of 22 / `design_freezing_index` at 0.56×** figures from the old
+version of this section have not been re-verified against the corrected
+mechanism above and are removed rather than carried forward unverified — they
+were computed by hand before this correction, not from a script, and
+re-deriving them properly means re-checking `real_data_bytes` against
+`PhysicalSize` per coverage the way `crrel_gipl_outputs_nc`'s 421.9 GB gap was
+checked in the audit's Method section, not against `totalSize`, which this
+whole correction has already shown is not a reliable disk figure.
 
 ![One coverage, drawn to scale](figures/rasdaman-tile-padding.svg)
 
-`era5_4km_elevation` is 460 × 442 cells tiled at 128 × 128. Neither axis
-divides evenly, so the grid runs to 512 × 512 — **262,144 cells of tile to hold
-203,320 cells of data, 22% dead.**
+The figure above still illustrates the geometric fact correctly — a
+460 × 442 array tiled at 128 × 128 doesn't divide evenly, `⌈442÷128⌉ = 4` and
+`⌈460÷128⌉ = 4` — but its caption's "22% of every tile read is dead" and
+"compresses away on disk" framing carries the same error as the prose above
+and should be read with that in mind until it's redrawn.
 
-Here is the part that surprises people, and that our own measurements settled:
-**that dead space costs almost nothing on disk.** Rasdaman compresses tiles, and
-zero-fill compresses to near nothing. Across our server, 19 of the 22 coverages
-with more than 1.2× geometric padding show no disk penalty at all —
-`design_freezing_index` carries 109× geometric padding and still sits at 0.56×
-its uncompressed size.
+### 3.3 Duplicate tile entries — a real index quirk, costing no real disk
 
-What padding *does* cost is read I/O, every single time, because the tile is
-fetched and decompressed whole before anything is discarded. So padding is
-worth avoiding, but for latency reasons, not disk reasons — and the fix is to
-pick chunk sizes that divide the axis, or to use `ALIGNED`, which shrinks
-boundary tiles instead of padding them.
-
-### 3.3 Duplicate tiles — where the storage actually went
-
-**The same tile domain, stored more than once.** Not a tiling defect at all:
-rasdaman holds several byte-identical copies of a tile, and you pay for each.
+**The same tile domain, indexed more than once.** Not a tiling defect: for a
+few dozen coverages, rasdaman's own tile index lists the same rectangular
+region two, four, even sixteen times. That part is real, proven by dumping
+the index directly. What it costs is a second question, and the answer —
+found only after chasing three wrong theories and one wrong unit — turned out
+to be **nothing measurable.** Both matter, so this section covers both: how we
+know the duplication is real, and how we know it's harmless.
 
 ![The same tile, stored several times](figures/rasdaman-tile-duplication.svg)
 
+#### The duplication is real
+
 Here is one cell of `cmip6_fwi` — model 2, time 100, lat 10, lon 10 — and every
-tile in the collection that contains it:
+tile in the collection's own index that contains it:
 
 ```
 [1:3,0:25679,10:11,10:11]
@@ -161,29 +212,88 @@ tile in the collection that contains it:
 [1:3,0:25679,10:11,10:11]
 ```
 
-Four identical domains. Nothing is overlapping or misaligned; the tile is simply
-there four times.
+Four identical domains, listed four separate times in `dbinfo(c,
+"printtiles=embedded")`'s output. Three coverages have had their **full**
+domain lists saved and counted (raw dumps in `data/tile-dumps/`):
 
-#### What the tile dump shows
+| coverage | indexed tiles | unique domains | worst repeat |
+|---|---|---|---|
+| `era5_4km_daily_t2_mean` | 4,678 | 4,678 | 1× (clean) |
+| `era5_4km_daily_t2_mean_wcs` | 7,642 | 6,553 | 4× |
+| `cmip6_fwi` | 266,724 | 101,745 | 8× |
 
-Three coverages, tile domains dumped in full and counted:
+For `cmip6_fwi` the full copies-per-domain distribution, counted directly from
+the saved dump, is uneven: 27,290 domains stored once, 29,847 twice, 2,364
+three times, 41,218 four times, 10 five times, 186 six times, 30 seven times,
+and 800 eight times (101,745 domains total, matching the unique count above)
+— a pattern worth remembering for the next section.
 
-| | tiles | unique domains | duplicate bytes | array | on disk |
-|---|---|---|---|---|---|
-| `era5_4km_daily_t2_mean` | 4,678 | 4,678 | 0 GB | 19.0 GB | 19.0 GB (1.00×) |
-| `era5_4km_daily_t2_mean_wcs` | 7,642 | 6,553 | 6.1 GB | 19.0 GB | 25.1 GB (1.32×) |
-| `cmip6_fwi` | 266,724 | 101,745 | 123.9 GB | 52.0 GB | 175.9 GB (3.38×) |
+Three more were checked with the `grep`/`sort`/`uniq -c` pipeline below rather
+than a saved full dump — enough to confirm they carry the same kind of
+duplication, without a retained unique-domain count:
 
-The unique domains cover **exactly** the array — 19.0 GB against 19.0 GB, 52.0
-against 52.0, to the byte. So the declared tiling did precisely what it was
-asked to do in every case. There is no padding waste here, no subdivision, no
-misalignment. Bytes on disk divided by bytes the tiles cover is 1.00× for all
-three. Every gram of overhead is a second, third or fourth copy.
+| coverage | indexed tiles | worst repeat seen |
+|---|---|---|
+| `iem_cru_2km_taspr_seasonal` | 8,276 | 3× |
+| `tas_2km_projected_wcs` | 4,265,164 | 16× |
+| `conus_hydro_segments_stats_combined` | 1,806,720 | 16× |
 
-For `cmip6_fwi` the copies-per-domain distribution is uneven: 27,290 domains
-stored once, 29,847 twice, 41,218 four times, 800 eight times.
+To check a coverage of your own, dump its domains and count them:
 
-#### A second, accidental experiment
+```bash
+curl -u rasadmin:$PASSWORD \
+  --data-urlencode 'query=select dbinfo(c,"printtiles=embedded") from $COLLECTION as c' \
+  'https://<host>/rasdaman/rasql' > tiles.json
+
+grep -a -o '"\[[-0-9:,]*\]"' tiles.json | sort | uniq -c | sort -rn | head
+```
+
+Any count above 1 is a duplicate index entry. If the top line reads `1`, the
+coverage's index is clean.
+
+#### Why `dbinfo`'s `totalSize` says this costs disk, and why it's wrong
+
+`totalSize` is not read off the filesystem. It's computed by walking the tile
+index and summing each **indexed entry's** own byte footprint — cell count
+times bytes-per-cell, adjusted for boundary padding. That's a sum over index
+entries, not over the array's actual unique data. A domain indexed four times
+contributes its footprint four times, because the summation has no way to
+know two entries describe the same bytes. This is exactly what the dumps
+above prove directly: `cmip6_fwi`'s 101,745 *unique* domains sum to precisely
+52.0 GB — its real, physical size, to the byte — while all 266,724 *indexed*
+entries, duplicates included, sum to the 175.9 GB that `totalSize` reports.
+
+That means every "reclaimable GB" figure this project computed from
+`totalSize` earlier — 4,591 GB of it, across 26 coverages — was real as an
+index-inflation number and fictional as a disk number. We only found this out
+by checking against a second, independent source that doesn't route through
+the tile index at all.
+
+#### The independent check: RASBASE's own object catalogue
+
+RASBASE (rasdaman's own SQLite catalogue, `/opt/rasdaman/data/RASBASE`) keeps
+a `PhysicalSize` field on every stored array object — computed at the object
+level, not by summing tile-index entries, so duplicate index entries can't
+inflate it. Reading it directly:
+
+```sql
+sqlite3 -readonly /opt/rasdaman/data/RASBASE "
+SELECT cn.MDDCollName, o.PhysicalSize
+  FROM RAS_MDDCOLLNAMES cn
+  JOIN RAS_MDDCOLLECTIONS mc ON mc.MDDCollId = cn.MDDCollId
+  JOIN RAS_MDDOBJECTS o      ON o.MDDId = mc.MDDId
+ WHERE cn.MDDCollName = 'cmip6_fwi_2026_05_01_09_29_49_8758';"
+```
+
+returns **52,018,435,200** — 52.0 GB, matching the unique-domain figure
+exactly, not the 175.9 GB `totalSize` reports. We checked this for every one
+of the 26 flagged coverages, not just this one: `PhysicalSize` matches the
+unique-domain figure every single time, with zero exceptions. See the [audit
+doc's Method section](rasdaman-tiling-audit.md#method-and-what-these-numbers-do-not-prove)
+for the full table and `scripts/rasdaman_physical_size.py` to run this
+yourself against any coverage.
+
+#### A second, accidental experiment — same conclusion from a different angle
 
 Someone once ingested `era5_4km_daily_t2_mean` three times at three different
 tile sizes and left the results on the server. All three hold the identical
@@ -195,72 +305,51 @@ array:
 | `big_tile_era5_4km_daily_t2_mean` | 1,172 | 19.011 GB |
 | `era5_4km_daily_t2_mean` (live) | 4,678 | 19.011 GB |
 
-A sixteen-fold difference in tile count, and the byte totals are identical to
-three decimal places. **Tile count and tile size do not affect how much disk a
-coverage occupies.** Only duplicates do. Choose your tiling for query
+A sixteen-fold difference in tile count, and the byte totals — this time
+`PhysicalSize`, not `totalSize` — are identical to three decimal places.
+**Tile count and tile size do not affect how much disk a coverage occupies,
+and neither does a duplicated index entry.** Choose your tiling for query
 performance and ignore storage entirely when making that decision.
 
-Six coverages have now had their domains dumped and counted, spanning the whole
-range of overhead. The worst multiplicity tracks the storage cost closely:
+#### Why the duplication happens anyway
 
-| coverage | overhead | most copies of one domain |
-|---|---|---|
-| `iem_cru_2km_taspr_seasonal` | 1.55× | 3 |
-| `era5_4km_daily_t2_mean_wcs` | 1.32× | 4 |
-| `cmip6_fwi` | 3.38× | 8 |
-| `tas_2km_projected_wcs` | 7.41× | 16 |
-| `conus_hydro_segments_stats_combined` | 12.64× | 16 |
+The uneven copies-per-domain distribution is the clue, even though it no
+longer points at a disk cost. A region touched by one write has one index
+entry; a region touched by four writes has four. The working explanation —
+**not independently confirmed, flagged as such since the first draft of this
+guide** — is that `wcst_import` was re-run against a coverage that already
+existed, each pass adding another index entry for the tiles it touched
+instead of replacing the existing one. It fits the pattern across the server:
+coverages ingested once sit at a clean 1×; the `_wcs` variants, tuned and
+re-run during development, carry the duplicates.
 
-So for every coverage in the re-ingest queue, `total_size` minus
-(cells × bytes-per-cell) *is* the duplicate count, and the spreadsheet's
-reclaimable column can be read directly.
+#### What this means for tiling decisions, and for the index
 
-
-#### Why it happens
-
-That unevenness is the clue. A region touched by one write has one copy; a
-region touched by four writes has four. The arrays were written into more than
-once — `wcst_import` re-run against a coverage that already existed, each pass
-laying down another copy of the tiles it touched instead of replacing them.
-
-It explains the pattern across the server. Coverages ingested once and left
-alone sit at 1.00×. The ones that were iterated on during development —
-typically the `_wcs` variants, tuned and re-run until the tiling looked right —
-carry the duplicates. `tas_2km_projected_wcs` at 7.41× is the extreme case.
-
-#### What this means for tiling decisions
-
-**Nothing.** Tile shape, `0:*` versus explicit bounds, the `tile size` budget,
-`REGULAR` versus `ALIGNED` — none of it causes or prevents duplication. A
-point-optimised pencil is not more expensive to store than a default cube. The
-tiling in these recipes was correct; the arrays were just written twice.
-
-Do not re-tile to fix this, and do not let a high storage overhead push you into
+**Nothing changes about how you tile.** Tile shape, `0:*` versus explicit
+bounds, `REGULAR` versus `ALIGNED` — none of it causes or prevents this, and
+none of it costs disk either way (Section 3.2 already established that for
+padding; this section extends it to duplicate entries). Do not re-tile to fix
+this, and do not let a high `totalSize`/`PhysicalSize` ratio push you into
 changing a tiling that serves your queries well.
 
-#### The rule
+What we have **not** checked is whether a bloated index has any cost of its
+own — a spatial (R+-tree) index with sixteen entries for one region might, in
+principle, do sixteen times the lookup work for a query that touches it, even
+though the underlying blob is fetched only once. This project measured disk,
+not query latency, on the duplicated coverages, so treat that as an open
+question, not a settled one.
 
-**Re-ingest into a fresh collection. Never re-run `wcst_import` against a
-coverage that already exists.** Delete the coverage first, or ingest under a new
-name and swap. `cmip6_fwi` goes from 175.9 GB to 52.0 GB with its recipe
-completely unchanged.
+The practical rule stands regardless of the disk finding: **avoid re-running
+`wcst_import` against a coverage that already exists.** Delete the coverage
+first, or ingest under a new name and swap. It costs nothing to follow and
+keeps the index (and this kind of investigation) simpler the next time
+someone looks.
 
-To check a coverage of your own, dump the domains and count them:
-
-```bash
-curl -u rasadmin:$PASSWORD \
-  --data-urlencode 'query=select dbinfo(c,"printtiles=embedded") from $COLLECTION as c' \
-  'https://<host>/rasdaman/rasql' > tiles.json
-
-grep -a -o '"\[[-0-9:,]*\]"' tiles.json | sort | uniq -c | sort -rn | head
-```
-
-Any count above 1 in that output is a duplicate. If the top line reads `1`, the
-coverage is clean.
-
-On our server, 247 of 273 coverages are clean at 1.05× or better. Twenty-six
-carry the whole 4,591 GB of excess, and one coverage,
-`tas_2km_projected_wcs`, accounts for 2,009 GB of it.
+On our server, 247 of 273 coverages have a clean, 1:1 tile index. Twenty-six
+carry duplicate entries. None of the 26 cost extra disk once you read
+`PhysicalSize` instead of `totalSize` — the worst of them,
+`tas_2km_projected_wcs`, reports 2,321.9 GB via `totalSize` and 313.3 GB via
+`PhysicalSize`, and 313.3 GB is the real number.
 
 ---
 
@@ -285,22 +374,91 @@ violated.
 
 ---
 
-## 5. `REGULAR` vs `ALIGNED`
+## 5. `REGULAR` vs `ALIGNED` — corrected 22 September 2026
 
-**`REGULAR [ranges] tile size N`** declares an exact tile shape, replicated
-across the array. Boundary tiles are still built at full declared size, with
-the overhang zero-filled — the padding of Section 3.2. It also **cannot be
-combined with `"irregular": true`** on any axis; every axis must be a plain
-evenly-spaced numeric sequence.
+**Both shrink boundary tiles; neither pads.** An earlier version of this
+section claimed `REGULAR` fetches a full-size tile at every edge while
+`ALIGNED` shrinks — checked against rasdaman's own Query Language Guide
+(Storage Layout Language chapter), that's wrong for `REGULAR` too. Its own
+example (`tiling regular [1024, 1024]`) is documented as producing tiles "of
+size 1024 x 1024, **except for border tiles (which can be smaller)**" — the
+same shrink-to-fit behavior `ALIGNED`'s own docs describe ("tiles can be
+smaller and deviate from the configuration sizings" at the array's upper
+limits). Section 3.2 has the fuller correction and the server evidence behind
+it. Neither scheme affects how much disk the coverage uses, for the same
+reason: nothing about the choice between them changes the array's logical
+size, and boundary tiles in both cases end up sized to what's actually there.
 
-**`ALIGNED [0:*, ...] tile size N`** lets rasdaman derive the shape to hit a
-byte target, and per its documentation "the tiles at the borders will be
-adjusted to fit in the domain" — it shrinks boundary tiles rather than padding
-them. It is the better default when axis sizes don't factor conveniently.
+So if not boundary padding, what *does* distinguish them? Two things, and
+rasdaman's own docs are explicit about both:
 
-Neither scheme affects how much disk the coverage uses. The choice is about
-boundary reads: `REGULAR` fetches a full-size tile at every edge, `ALIGNED`
-fetches a smaller one.
+**What you have to already know.** `REGULAR [ranges] tile size N` declares an
+exact tile shape up front — you commit to a chunk size for every axis before
+ingest. `ALIGNED [0:*, ...] tile size N` lets you leave some axes as `*` — a
+*preferred direction of access* — and have rasdaman size them to hit the byte
+target once the axes you *do* pin are fixed. It's the only option when an
+axis's real chunk size isn't decided yet, or when the axes involved don't
+factor near your budget (Section 4's case for `crrel_gipl_outputs_nc`'s
+spatial axes).
+
+**One thing this section previously got wrong: a recipe's `"irregular": true`
+on an axis does not rule out `REGULAR` tiling.** That flag lives in the
+recipe's `axes` block and governs how petascope declares the axis's
+real-world CRS coordinate values — a plain min/max/resolution sequence versus
+an explicit `directPositions` list, needed here because `model` and
+`scenario` are categorical lookups and `time` is given as actual dates rather
+than a fixed step. The tiling bracket operates entirely in a different
+space — integer grid-index counts — and nothing in rasdaman's Storage Layout
+Language documentation ties the two together; `crrel_gipl_outputs_nc` sets
+`"irregular": true` on `time`, `model`, and `scenario` because the recipe
+already committed to `ALIGNED` tiling elsewhere in the same file, not because
+`REGULAR` would have been rejected. Thanks to Josh for the correction here —
+I'd assumed the two were linked and hadn't checked. I could not find the
+`wcst_import` source itself to confirm there's no validation check enforcing
+this in some other way (rasdaman's canonical repository isn't reachable from
+here), so if you hit a real ingest-time error tying `REGULAR` to an irregular
+axis, that would be new information worth feeding back into this section —
+but nothing in the documentation predicts one.
+
+**What access pattern each is actually pitched at — and it runs opposite to
+the "regular divides evenly, so use it for point queries" intuition.**
+Rasdaman's own tiling guidelines single out `REGULAR` for exactly the
+opposite case: *not* knowing the query shape, or a client that always
+requests same-size regions —
+
+> "Nothing is known about access patterns: choose regular tiling with a
+> maximum tile size... map viewing clients typically send several requests
+> of fixed extent per mouse click to maintain a cache of tiles in the
+> browser for faster panning. So the extent of the tile is known — or at
+> least that tiles are quadratic."
+
+— which describes a map/WMS-style client, not a point query. `ALIGNED` is
+what the docs reach for specifically to describe a point/time-series pattern:
+
+> "...either a time slice is read... or a time series is extracted for one
+> particular position (x, y)... An axis which never participates in any
+> subsetting box is called a preferred direction of access."
+
+A point time series is precisely "never subsets the time axis" — the textbook
+case for `ALIGNED`'s wildcard, not for `REGULAR`. Section 4's WCS point
+scheme in `CRREL_GIPL_tiling.md` uses `ALIGNED` for this reason — it's the
+tool the documentation itself recommends for that access pattern — and also
+because neither spatial axis factors close to the byte budget it needs, not
+because `REGULAR` was ever off the table on legality grounds.
+
+One caveat, lower confidence than the rest of this section: an older,
+unversioned rasdaman wiki page describes a *regular computed index*
+(`rc_index`) — available only under `REGULAR` tiling — that locates a tile by
+direct arithmetic on its fixed size and position rather than an R+-tree
+lookup, which would be a genuine index-speed argument for `REGULAR` wherever
+its restrictions don't rule it out. This didn't turn up in the current Query
+Language Guide, so treat it as plausible, not confirmed. `dbinfo`'s own JSON
+output carries the field that would settle it — `"index": {"type": ...}` —
+and both saved dumps this audit has for `ALIGNED` coverages report
+`"rpt_index"` (R+-tree), for `cmip6_fwi` and `era5_4km_daily_t2_mean`
+(`data/tile-dumps/`). Neither is `REGULAR`-tiled, so this doesn't confirm or
+rule out `rc_index` either way — dump a `REGULAR`-tiled coverage's `dbinfo`
+output the same way to check.
 
 A wildcard is a real delegation of control. `ALIGNED [0:*, 0:31, 0:31] tile size
 16777216` pins the spatial chunks at 32 and lets rasdaman choose the first axis;
@@ -352,11 +510,13 @@ by a factor of three thousand. Going further to 2 × 2 gets you to 4×, close to
 the floor — but the map query degrades from 24,000× to 129,000×, because a map
 frame now has to assemble tens of thousands of tiny tiles.
 
-The first two rows hold the *identical array* and occupy the same space for it.
-`era5_4km_daily_t2_mean_wcs` reports 1.32× on disk, but that is 6.1 GB of
-duplicate tiles from a re-run ingest (Section 3.3), not a cost of its tiling. Had
-it been ingested once it would sit at 19.0 GB, exactly like its sibling, while
-answering point queries three thousand times faster.
+The first two rows hold the *identical array* and occupy the identical space
+for it: 19.0 GB, both of them, once you read the real figure
+(`PhysicalSize`) rather than `totalSize`. `era5_4km_daily_t2_mean_wcs`'s
+`totalSize` reports 1.32×, 25.1 GB, but that is the duplicate index entries
+from a re-run ingest (Section 3.3) inflating the count, not a real byte on
+disk. Its tiling costs nothing extra either way, and answers point queries
+three thousand times faster than its sibling.
 
 So the middle row is the one to copy. A spatial footprint of roughly 8 × 8 to
 12 × 12 with the sweep axis kept whole captures nearly all of the point-query
@@ -379,40 +539,33 @@ Every axis at full extent except `stream_id`, chunked to 1. Divisibility is
 automatic — full extent divides itself, and 1 divides anything. Cells per tile:
 4 × 366 × 2 × 14 × 5 × 1 = 204,960.
 
-**Gridded permafrost dataset.** Native dimensions `time=100, model=3,
-scenario=2, y=1941, x=2471`, so `gridOrder` is `time=0, model=1, scenario=2,
-y=3, x=4` and the bracket follows that order. Chunking the spatial axes on their
-actual divisors — 647 for Y (3 blocks), 353 for X (7 blocks):
+**Gridded permafrost dataset — `crrel_gipl_outputs_nc`.** This one gets a
+full document of its own:
+[`CRREL_GIPL_tiling.md`](CRREL_GIPL_tiling.md). It starts from the source
+file's `ncdump`, works out the true storage order the hard way (this
+coverage is one of Finding 4's catalogue disagreements — `DescribeCoverage`
+reports the wrong axis order, so the recipe's `gridOrder` has to settle it),
+and designs two separate schemes — a point/time-series tiling and a
+map-rendering tiling — both held to a strict 4 MB target, ready to be
+ingested as test coverages and timed against the original. Worth reading in
+full for how it picks `ALIGNED` on both spatial axes not because `REGULAR`
+was disqualified (Section 5's correction: a recipe's `"irregular": true` on
+an axis doesn't rule out `REGULAR` tiling, that flag is about CRS coordinate
+declaration, not storage layout) but because neither 1941 nor 2471 factors
+anywhere near the chunk sizes a 4 MB budget needs.
 
-```
-"tiling": "REGULAR [0:0, 0:0, 0:0, 0:646, 0:352] tile size 9135640"
-```
-
-Cells per tile: 647 × 353 = 228,391. At 10 `float32` bands that's 228,391 × 40 =
-9,135,640 bytes. Both chunk sizes divide exactly, so there is no padding.
-
-**The catch worth internalising:** those chunk sizes are only exact divisors in
-one specific assignment — 353 on X (2471 = 7 × 353) and 647 on Y (1941 = 3 ×
-647). A real ingest transposed them, putting 647 on X and 353 on Y. Neither axis
-divided evenly any more, and both ends now pad. The **tile count** rose by
-exactly 8/7 — which is what the original investigation noticed, 14,400 tiles
-where 12,600 were expected:
-
-```
-⌈2471 ÷ 647⌉ = 4 blocks → 2588 covered (117 padded)
-⌈1941 ÷ 353⌉ = 6 blocks → 2118 covered (177 padded)
-4 × 6 = 24 spatial blocks, where 7 × 3 = 21 was intended
-```
-
-The total byte arithmetic still checked out perfectly, because tile volume does
-not care which axis contributed which factor. **Only a per-axis divisibility
-check catches a transposition.**
-
-Note what this did and did not cost. More tiles and padded edges mean more bytes
-fetched and decompressed on every read — a latency cost, paid forever. They do
-not mean more disk: the padding compresses away (Section 3.2) and the tile count
-is irrelevant to storage (Section 3.3). A transposition is a performance bug, not
-a capacity one.
+The general lesson that document's section 4 draws out is worth stating here
+too: a chunk size that divides one axis exactly is not guaranteed to divide
+the *other* axis it might get paired with if the two spatial axes are ever
+swapped — `1941 = 3 × 647` and `2471 = 7 × 353` share no common factor, so a
+transposition between them doesn't degrade gracefully, it breaks divisibility
+on both sides at once. **A per-axis divisibility check, not a total-byte
+check, is what catches a transposition** — the byte arithmetic comes out
+identical either way, because tile volume doesn't care which axis
+contributed which factor. And whatever it costs, it isn't disk: more tiles
+and padded edges mean more bytes fetched per read (a latency cost, paid
+forever), not more bytes stored (Section 3.2) — a transposition is a
+performance bug, not a capacity one.
 
 ---
 
@@ -452,8 +605,14 @@ curl -u rasadmin:$PASSWORD \
 ```
 
 The fields that matter: `baseType` (count and type of every band, so you can
-read the true per-cell width), `tileNo` (tiles actually created), `totalSize`
-(bytes actually persisted), and `tiling.tileConfiguration` (the tile shape).
+read the true per-cell width), `tileNo` (tiles indexed — including duplicate
+entries, see Section 3.3), `totalSize` (**not** bytes on disk — it's cells ×
+bytes-per-cell summed over every *indexed tile entry*, so a duplicated entry
+gets counted again; see Section 3.3 and the check below), and
+`tiling.tileConfiguration` (the tile shape). For the real on-disk figure, read
+`RAS_MDDOBJECTS.PhysicalSize` from RASBASE directly — Section 3.3 and the
+[audit doc's Method section](rasdaman-tiling-audit.md#method-and-what-these-numbers-do-not-prove)
+have the query.
 
 Adding `dbinfo(c,"printtiles=embedded")` also lists every individual tile
 domain. Be careful with it: on a coverage with millions of tiles the response
@@ -468,9 +627,13 @@ tiling behaved. Lower means sparse materialisation, which is fine. Higher does
 count meaningless, and `era5_4km_daily_t2_mean` scores 2,339× by this test while
 storing at exactly 1.00×.
 
-*Am I paying for the array more than once?* This is the one that finds real
-money. Divide `totalSize` by (cells × bytes-per-cell). Above about 1.05 means
-duplicate tiles (Section 3.3), which the domain dump confirms directly.
+*Does my index have duplicate entries?* Divide `totalSize` by (cells ×
+bytes-per-cell). Above about 1.05 means the tile index has duplicate entries
+for this coverage (Section 3.3) — a sign `wcst_import` was re-run against it
+without dropping it first. It is **not** a disk check: it does not cost extra
+bytes on disk (confirm the real figure with `RAS_MDDOBJECTS.PhysicalSize`),
+but it's still worth knowing, both as a process-hygiene signal and because
+what a bloated index costs query latency is untested.
 
 *Is there padding?* Check each axis separately: `extent % chunk == 0`. The byte
 arithmetic will look right even when two chunk sizes are transposed, so only the
@@ -532,9 +695,13 @@ answer to "what is actually stored," because it comes from the array itself.
    doesn't touch the database.
 2. Estimate the size: `(product of all axis extents) × (bands) × (bytes per
    value)`. A source netCDF much smaller than this is normal — HDF5 compresses
-   internally. Rasdaman compresses too, so the persisted figure usually lands
-   below this estimate. A figure *above* it means duplicate tiles (Section 3.3),
-   almost always because the coverage already existed when the recipe ran.
+   internally. Rasdaman compresses too, so `RAS_MDDOBJECTS.PhysicalSize`
+   (Section 3.3) usually lands below this estimate once ingest finishes. If
+   `dbinfo`'s `totalSize` reads well above it, don't panic — check
+   `PhysicalSize` before concluding anything, since `totalSize` inflates on
+   its own if the coverage already existed when the recipe ran (Section 3.3).
+   `PhysicalSize` landing above the estimate would be the real warning sign;
+   we have not seen that happen on this server.
 3. Test the tiling on a small subset before committing to a multi-hundred-GB
    run. A bad tile choice is expensive to discover halfway through.
 4. After ingest, run the five checks in Section 9, and spot-check one known
@@ -552,6 +719,12 @@ answer to "what is actually stored," because it comes from the array itself.
 
 Every measurement in this guide comes from the 273 coverages on
 `zeus.snap.uaf.edu`, collected by `rasdaman_tiling_audit.py`, with tile domains
-dumped and counted for six of them. Where documentation and direct introspection
-disagreed, introspection won — including on the cause of excess storage, which
-took three wrong explanations before the tile dump settled it.
+dumped and counted for six of them and every disk figure cross-checked against
+`RAS_MDDOBJECTS.PhysicalSize` via `rasdaman_physical_size.py`. Where
+documentation and direct introspection disagreed, introspection won — and more
+than once introspection itself was wrong first. The cause of the excess
+`totalSize` figures took three wrong theories before the tile dump found the
+real one (duplicate index entries); what that duplication actually costs on
+disk took a wrong unit assumption and a second RASBASE field
+(`PhysicalSize`) before landing on "nothing measurable." Both corrections are
+in Section 3.3, in full, including the reasoning that turned out to be wrong.
