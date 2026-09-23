@@ -20,11 +20,11 @@ Everything here was produced by `rasdaman_tiling_audit.py` and `rasdaman_physica
 
 **2,037 GB is collections nothing points at, and is real.** Abandoned ingests, personal experiments, test runs, and twelve arrays squatting on live coverage names — invisible to WCS, droppable without touching a live coverage. A further 1,268 GB sits in a single orphan collection that turned out to be almost entirely *file-referenced* rather than stored — its data exists "in-situ", but not inside rasdaman, so dropping it will not recover that GB figure. (see Finding 5 below).
 
-**Separately, and unaffected by either of the above, most coverages are tiled against their own access pattern.** Of 253 coverages we can model, 228 read more than a thousand times the bytes a typical query returns, and 53 more than ten thousand times — for the point and small-AOI lookups the data portal issues constantly. This is the problem re-tiling solves, and it has *no* storage consequence in either direction, correction or no correction. (see Finding 2 below).
+**Separately, and unaffected by either of the above, most coverages are tiled against their own access pattern.** Of 253 coverages we can model, 52 read more than a thousand times the bytes a typical query returns, and 50 more than ten thousand times — for the point and small-AOI lookups the data portal issues constantly. This is the problem re-tiling solves, and it has *no* storage consequence in either direction, correction or no correction. (see Finding 2 below).
 
 Underneath sit eleven coverages whose stored array disagrees with what WCS advertises (Finding 4), 24 live coverages with no ingest recipe on `origin/main` (see Finding 6 below), and seven test coverages holding real (if modest) disk in the public catalogue.
 
-**The 171 `cmip6_downscaled` v2 coverages are the healthiest group on the server** at 0.500×–1.009× storage overhead with no duplicates at all.
+**The 171 `cmip6_downscaled` v2 coverages are the healthiest group on the server for storage** at 0.500×–1.009× storage overhead with no duplicates at all — though their real tiling carries a serious map-query cost (Finding 3).
 
 A note on what is measured. Reading petascope's own coverage-to-collection pointer out of `petascopedb` made `dbinfo` succeed for **all 273 coverages with no failures**, each one confirmed against the coverage's own array. Every disk-size figure in this document is `RAS_MDDOBJECTS.PhysicalSize`, read directly from RASBASE, not `dbinfo`'s `totalSize` (see Finding 1 and the Method section for why that distinction matters). Nothing below is modelled from ingest recipes.
 
@@ -138,21 +138,21 @@ The decisive test would be to ingest a throwaway coverage, measure it, re-run th
 
 This is the problem re-tiling actually solves, and it is independent of Finding 1. Storage and read cost are unrelated: the `era5_4km_daily_t2_mean` array exists on this server at 289, 1,172 and 4,678 tiles and occupies exactly 19.011 GB in all three. Tiling is a pure query-performance decision.
 
-Most SNAP coverages are queried at a point or over a small AOI polygon: pick an x/y, return the full time series. The tiling that suits this keeps the non-spatial axes whole inside a tile and makes the spatial footprint small (guide, section 3.1). Of 253 coverages we can model, **228 read more than a thousand times the bytes a typical query returns, and 53 more than ten thousand times.**
+Most SNAP coverages are queried at a point or over a small AOI polygon: pick an x/y, return the full time series. The tiling that suits this keeps the non-spatial axes whole inside a tile and makes the spatial footprint small (guide, section 3.1). Of 253 coverages we can model, **52 read more than a thousand times the bytes a typical query returns, and 50 more than ten thousand times.**
 
 The trade-off is visible directly in coverages we already have, on the same 460 × 442 4km ERA5 grid:
 
 | Coverage | Tile | Point query | Map query |
 |---|---|---|---|
-| `era5_4km_daily_t2_mean` | rasdaman's choice — 5 × 460 × 442 | 203,320× | 46,752× |
-| `era5_4km_daily_t2_mean_wcs` | whole time axis, 8 × 8 spatial | 64x | 23,899× |
-| `cmip6_fwi` and its five siblings | whole time axis, 2 × 2 spatial | 4× | 128,626× |
+| `era5_4km_daily_t2_mean` | rasdaman's choice — 5 × 460 × 442 | 203,355× | 5× |
+| `era5_4km_daily_t2_mean_wcs` | whole time axis, 8 × 8 spatial | 128× | 23,898× |
+| `cmip6_fwi` and its five siblings | whole time axis, 2 × 2 spatial | 4× | 25,725× |
 
-Shrinking the spatial footprint to 8 × 8 improves point reads three thousand-fold and *also* improves map reads. Going on to 2 × 2 buys the last factor of sixteen on point queries but makes map rendering five times worse, because a frame must now assemble tens of thousands of tiny tiles.
+Shrinking the spatial footprint to 8 × 8 improves point reads roughly 1,600-fold — and makes map reads about 4,800 times worse, because a frame that used to fit in one tile (it already covered the whole grid) now has to assemble thousands of small ones. Going on to 2 × 2 buys a further 32× on point queries, at almost no additional cost to map rendering: it was already so fragmented that shrinking the spatial footprint further barely changes it.
 
 ## Finding 3 — The cmip6_downscaled v2 family
 
-175 coverages, the largest single group on the server. **They are the healthiest coverages we have.**
+175 coverages, the largest single group on the server. **Storage-wise, they are the healthiest coverages we have** — read on for a real cost this same finding turned up.
 
 Our usual `rasql` `dbinfo` query could not reach them because `wcst_import` had not named their collections after their coverage IDs. The rule turned out to be mundane: `_v2` migrates from the middle of the name to the end, so `cmip6_downscaled_pr_7ModelAvg_historical_v2_wcs` is stored as `cmip6_downscaled_pr_7ModelAvg_historical_wcs_v2`. Reading petascope's own pointer out of `petascopedb` resolves all 175 without guessing:
 
@@ -162,11 +162,15 @@ SELECT c.coverage_id, r.collection_name
   JOIN rasdaman_range_set r ON r.rasdaman_range_set_id = c.rasdaman_range_set_id;
 ```
 
-With that mapping, `dbinfo` succeeds on every one. They hold **3,981 GB persisted against 3,947 GB of data — a storage overhead between 0.500× and 1.009×.** Several store below their uncompressed size. There are no duplicate tiles anywhere in the family. They were ingested once, cleanly, and left alone.
+With that mapping, `dbinfo` succeeds on every one. They hold **3,981 GB persisted against 3,947 GB of data — a storage overhead between 0.500× and 1.009×.** Several store below their uncompressed size. There are no duplicate tile-index entries anywhere in the family.
 
-What remains is a read-performance question. All 171 `_wcs` members declare `ALIGNED [0:*, 0:31, 0:31] tile size 16777216`, from which rasdaman derives a 4096 × 32 × 32 tile. A full time series at one point touches five of them — about **83.9 MB read to return 73 KB**, a median of **1,024×** across the family. Shrinking the spatial chunk to 7 × 7 gives a ~3.6 MB tile at 49×; 4 × 4 gives ~1.2 MB at 16×.
+What remains is a read-performance question. All 171 `_wcs` members declare `ALIGNED [0:*, 0:31, 0:31] tile size 16777216`. Sampling real tile domains directly — checked on six coverages spanning `pr`/`tasmin`/`tasmax`, `historical` and three `ssp` scenarios, and the `7ModelAvg` ensemble product, with the identical distribution in every one — shows two tile populations, not one: **73–79% of tiles span nearly the entire time axis** (all but the last day) at a narrow 4–7-cell spatial chunk, and the remaining **12–17% cover just that last day** at a 32 × 32 spatial chunk.
 
-Applied across 171 coverages serving the public data portal, that is the largest *performance* win available — and because it touches no storage, it can be scheduled independently of the re-ingest work in Finding 1.
+A full time series at one point touches only the 2 tiles that cover it — the one large one plus the last-day one — at **256×** (the three `ssp` scenarios) or **448×** (`historical`). A single time-slice map, by contrast, touches nearly every spatial-position tile, each dragging in almost the whole time axis, at **~32,827×** (`ssp`) or **~19,257×** (`historical`).
+
+Why the tiling comes out this way is not established. `wcst_import`'s write pattern for this family — plausibly one large write per small spatial subregion spanning the whole time axis — is the leading candidate, not a confirmed mechanism.
+
+Applied across 171 coverages serving the public data portal, the map-query cost is the one worth fixing here — point queries are already reasonable, map rendering is not. Because it touches no storage, this work can be scheduled independently of the re-ingest work in Finding 1.
 
 ## Finding 4 — Stored arrays that disagree with the catalogue
 
@@ -244,7 +248,7 @@ Two independent problems with real disk consequences, one performance problem wi
 2. `cmip6_downscaled_tasmax_complete_crstephenson_2025_09_22_12_03_04_2874` — confirmed file-referenced; drop for catalog cleanliness, expect ~0 GB recovered.
 3. The rest of the 104 priced orphans, largest first — **2,036.8 GB** genuinely recoverable, pending the `--check-fileref` spot-checks on the next few largest (Finding 5).
 
-**Second, re-tile for read performance — no storage consequence either way.** The v2 family first: 171 coverages, roughly 20× less I/O per point query. Do one, measure it, then batch the rest. Then the 45 coverages on default tiling and the worst of the modelled amplification list. This step does not touch disk usage in either direction; schedule it independently of the first.
+**Second, re-tile for read performance — no storage consequence either way.** The v2 family first: 171 coverages. Point queries against them are already reasonable (256–448×); map rendering is not (~19,000–33,000×) and needs a re-tile. Do one, measure it, then batch the rest. Then the 45 coverages on default tiling and the worst of the modelled amplification list. This step does not touch disk usage in either direction; schedule it independently of the first.
 
 **Third, resolve the integrity list** — 11 coverages, mostly a decision about which layer is authoritative, plus one petascope metadata bug worth reporting upstream.
 

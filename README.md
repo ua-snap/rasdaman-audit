@@ -4,6 +4,13 @@ Tools and findings from an audit of every coverage on SNAP's production rasdaman
 
 Everything here should be reproducible as of 9/22/26. Any revision to the current collection of coverages will change the audit results. The scripts are Python 3 standard library only (except the workbook builder, which needs `openpyxl`), read-only against Zeus, and re-runnable after any change.
 
+If you want to run the workbook builder, just clone the base conda environment on Zeus and add the `openpyxl` package:
+
+```
+conda create --name rasda-audit --clone base
+conda install openpyxl
+```
+
 ## What we found
 
 | | |
