@@ -42,12 +42,13 @@ data/          the inputs and outputs of the 2026-09-21/22/23 runs
 data/tile-dumps/   raw tile domains for seven coverages, gzipped
 data/physical_sizes.csv   every collection's real disk size, from RASBASE
 rasdaman_tiling_audit.xlsx    seven tabs, all live formulas
+utilities/     a netCDF-in, tiling-recommendations-out CLI tool -- see utilities/README.md
 ```
 
 ## Docs
 Start with **[docs/rasdaman-tiling-guide.md](docs/rasdaman-tiling-guide.md)** — what a tile is, what it costs, how a recipe becomes stored tiles. Then
 **[docs/rasdaman-tiling-audit.md](docs/rasdaman-tiling-audit.md)** for what is true of our server, and `rasdaman_tiling_audit.xlsx` for the per-coverage
-numbers behind it. **[docs/CRREL_GIPL_tiling.md](docs/CRREL_GIPL_tiling.md)** walks the whole process end to end on one real coverage — from `ncdump` to two tiling schemes to a place to record how they actually perform — and is the place to start if you're about to tile something yourself.
+numbers behind it. **[docs/CRREL_GIPL_tiling.md](docs/CRREL_GIPL_tiling.md)** walks the whole process end to end on one real coverage — from `ncdump` to two tiling schemes to a place to record how they actually perform — and is the place to start if you're about to tile something yourself. **[utilities/](utilities/README.md)** automates that same method: point it at a netCDF file and it recommends tiling schemes for point, polygon, full-domain-map, and WCPS-condense queries at several tile-size budgets, using the file's own real dimensions rather than a worked-by-hand example.
 
 
 ## Running it yourself

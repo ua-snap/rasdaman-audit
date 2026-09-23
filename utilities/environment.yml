@@ -1,0 +1,12 @@
+name: rasdaman-tiling-utils
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - netcdf4
+  - xarray
+  - numpy
+  - requests
+  - shapely
+  - pyproj
+  - geopandas

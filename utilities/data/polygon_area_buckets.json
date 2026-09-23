@@ -1,0 +1,31 @@
+{
+  "crs": "EPSG:3338",
+  "method": "quantile classification (equal count per bucket) over polygon area in EPSG:3338",
+  "n_polygons_total": 17772,
+  "buckets": {
+    "small": {
+      "n_polygons": 5924,
+      "area_m2_min": 10357859.909625366,
+      "area_m2_max": 91683952.03425294,
+      "area_m2_median": 61595342.05722627,
+      "bbox_width_m_median": 10937.557973075105,
+      "bbox_height_m_median": 11292.96965127869
+    },
+    "medium": {
+      "n_polygons": 5924,
+      "area_m2_min": 91688996.457095,
+      "area_m2_max": 150496482.6577759,
+      "area_m2_median": 121123322.42537165,
+      "bbox_width_m_median": 15647.704023480059,
+      "bbox_height_m_median": 16286.723930995446
+    },
+    "large": {
+      "n_polygons": 5924,
+      "area_m2_min": 150504677.92479783,
+      "area_m2_max": 1048692793739.4185,
+      "area_m2_median": 450243035.7487093,
+      "bbox_width_m_median": 30628.603813147434,
+      "bbox_height_m_median": 31172.60615836503
+    }
+  }
+}

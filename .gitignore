@@ -12,3 +12,15 @@ tiles.json
 # (README points --outdir outside the repo, e.g. ~/tiling_audit -- this is
 # just a guard in case it's ever pointed here instead)
 /tiling_audit/
+
+# Session scratch notes, not for the team
+/PLAN.md
+
+# Raw boundary-polygon snapshot (100+ MB) -- regenerate with
+# utilities/fetch_boundaries.py rather than committing it; only the small
+# derived polygon_area_buckets.json is checked in
+/utilities/data/boundaries.geojson
+/utilities/data/boundaries.geojson.gz
+
+# Generated test fixture (21 MB) -- regenerate with tests/make_test_netcdf.py
+/utilities/tests/synthetic_gipl_like.nc
