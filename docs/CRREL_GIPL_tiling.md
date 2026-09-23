@@ -235,7 +235,7 @@ Point/map amplification aren't modelled for this scheme — its target access pa
 | Current (as ingested) | 1, 1, 1, 42, 2471 (599/600 combos; one combo offset — section 7) | 4.16 MB typical / 28,202 unique domains confirmed | 29,109 indexed (28,202 unique + 907 duplicate entries — section 7) | 103,782× | ≈1.02× |
 | A — WCS point/time-series | 100, 3, 2, 13, 13 | 3.87 MiB | 28,650 | **169×** | 606× |
 | B — WMS/map | 1, 1, 1, 323, 323 | 3.98 MiB | 33,600 | 104,329× | **1.22×** |
-| B′ — WMS/condense (30-step) | 30, 1, 1, 59, 59 | 3.98 MiB | 33,264 | not modelled (not its job) | 30.2× for a single slice; ≈1.2–2.4× for an aligned 30-step condense |
+| B′ — WCPS condense, 30-step (served as a WMS style) | 30, 1, 1, 59, 59 | 3.98 MiB | 33,264 | not modelled (not its job) | 30.2× for a single slice; ≈1.2–2.4× for an aligned 30-step condense |
 | C — polygon/AOI (small/medium/large, 4 MB) | 100, 3, 2, 14, 14 | 4.486 MiB | 24,603 | not modelled (not its job) | not modelled (not its job) |
 
 Read at face value, the current scheme is already close to map-optimal (barely better than the hand-designed scheme B, by sweeping X instead of chunking it) and just as bad for point queries as scheme B — meaning scheme A should be the one that shows the biggest before/after contrast when tested.
