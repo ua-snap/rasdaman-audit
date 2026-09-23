@@ -31,7 +31,10 @@ Six coverages had every tile domain dumped and counted directly: some domains re
 One 1,268 GB orphan collection turned out to be ingested "in situ" — its tiles are pointers into source netCDF files, never copied into rasdaman's own storage. Its `PhysicalSize` is an honest count of real data; it just isn't data rasdaman is holding. Check `RAS_FILETILES` before assuming a large orphan's GB is real disk (see step 3 below).
 
 #### **A coverage ID is not a collection name.** 
-`wcst_import` does not reliably name the rasdaman collection after the coverage — it may append a timestamp, or collections may be manually renamed without affecting the coverage name. 186 of 273 diverge. Any tool that assumes they match will silently measure the wrong array, or fail outright with `Object Unknown`. Read the mapping out of `petascopedb` and hand it to the scripts (step 1 below).
+`wcst_import` does not reliably name the rasdaman collection after the coverage — it may append a timestamp, or collections may be manually renamed without affecting the coverage name. 186 of 273 diverge. Any tool that assumes they match will silently measure the wrong array, or fail outright with `Object Unknown`. Read the mapping out of `petascopedb` and hand it to the scripts (step 1 below). ("Coverage" and "collection" are two different systems' words for two different things joined by exactly one pointer — see the guide's [coverage vs. collection](docs/rasdaman-tiling-guide.md#0-coverage-vs-collection) section.)
+
+#### **The ingest/delete scripts don't verify either side of that pointer.** 
+`add_coverage.sh` (`wcst_import.sh`) doesn't check whether a coverage ID already exists before importing into it, and `delete_coverage.sh` (WCS-T `DeleteCoverage`) only checks an HTTP status code, discarding the response body — neither one confirms that petascope's metadata and rasdaman's collection actually ended up in sync. That gap is the leading, evidenced explanation for most of the 105 unreferenced collections above: see the tiling audit's [Finding 5](docs/rasdaman-tiling-audit.md) for the timestamped-re-ingest pattern that proves it.
 
 
 ## Repo Layout
@@ -46,7 +49,7 @@ utilities/     a netCDF-in, tiling-recommendations-out CLI tool -- see utilities
 ```
 
 ## Docs
-Start with **[docs/rasdaman-tiling-guide.md](docs/rasdaman-tiling-guide.md)** — what a tile is, what it costs, how a recipe becomes stored tiles. Then
+Start with **[docs/rasdaman-tiling-guide.md](docs/rasdaman-tiling-guide.md)** — what "coverage" and "collection" each mean and how loosely they're joined, then what a tile is, what it costs, how a recipe becomes stored tiles. Then
 **[docs/rasdaman-tiling-audit.md](docs/rasdaman-tiling-audit.md)** for what is true of our server, and `rasdaman_tiling_audit.xlsx` for the per-coverage
 numbers behind it. **[docs/CRREL_GIPL_tiling.md](docs/CRREL_GIPL_tiling.md)** walks the whole process end to end on one real coverage — from `ncdump` to two tiling schemes to a place to record how they actually perform — and is the place to start if you're about to tile something yourself. **[utilities/](utilities/README.md)** automates that same method: point it at a netCDF file and it recommends tiling schemes for point, polygon, full-domain-map, and WCPS-condense queries at several tile-size budgets, using the file's own real dimensions rather than a worked-by-hand example.
 

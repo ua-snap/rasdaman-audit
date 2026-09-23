@@ -201,6 +201,35 @@ Separate from anything inside a live coverage, rasdaman's catalogue holds **105 
 | Shadow — sits at a live coverage's name | 12 | 217.4 GB |
 | Superseded ingest | 17 | 0.0 GB |
 
+### Why these come to exist: the ingest/delete tooling has no safety net
+
+The two scripts operators actually run — `/usr/local/bin/add_coverage.sh` (wraps `wcst_import.sh`) and `/usr/local/bin/delete_coverage.sh` (wraps WCS-T `DeleteCoverage`) — aren't part of this repo, but reading them explains most of the categories above. (See the [tiling guide's coverage-vs-collection note](rasdaman-tiling-guide.md#0-coverage-vs-collection) for what a "coverage" and a "collection" each are and how loosely they're joined — that's the gap these two scripts fall into.)
+
+`add_coverage.sh` is a one-line wrapper:
+
+```bash
+/opt/rasdaman/bin/wcst_import.sh -c 0 ${PATH_TO_INGEST_DOC}
+```
+
+It does not check whether the coverage ID in the ingest document already exists, and it does not check `wcst_import`'s own exit code — there's no success or failure message at all. Nothing stops, or even warns about, running it twice against the same coverage ID, which is exactly the hazard Finding 1's "one process rule" calls out for the tile index. `data/unreferenced_collections.csv` shows it's a hazard for the catalogue too, not just the index. `alfresco_relative_flammability_30yr_crstephenson` was re-ingested **12 times** on 2025-01-29 alone (some pairs under a minute apart), plus once more on 2025-02-04 and again on 2025-04-15 — all 12 January collections are now sitting in the "abandoned ingest" category, timestamped, with nothing in petascope pointing at any of them. `conus_hydro_segments_test_exsitu_reg2` (3 copies inside about 3 hours) and `test_nan` (5 copies inside 47 minutes) show the same pattern at smaller scale.
+
+That's the leading, directly evidenced explanation for the 23-collection, 1,398.7 GB "abandoned ingest" category: each re-ingest of a live coverage ID gets `wcst_import` to mint a fresh, uniquely timestamped rasdaman collection, and petascope's `coverage → rasdaman_range_set` pointer moves to the newest one. The previous collection is stranded — and by the time it's orphaned, there is no coverage ID left to hand `delete_coverage.sh`, because an orphaned collection is, by definition, one no coverage ID resolves to anymore. `add_coverage.sh` has no step that would catch this before it happens.
+
+(`add_coverage.sh` also hardcodes `-c 0`. Checked directly against `wcst_import.sh -h` on the host: `-c`/`--gdal-cache-size` controls how many open GDAL datasets `wcst_import` keeps cached, and `0` disables that cache entirely — a resource-tuning choice, unrelated to re-ingest safety. `wcst_import.sh` has no flag that checks for or protects against an already-existing coverage ID; `-a`/`--analyze` is the closest thing, a dry run that prints the WCS-T requests and a recommended tiling scheme without importing, and `add_coverage.sh` doesn't invoke it. The absence of any existing-coverage check stands as stated above.)
+
+`delete_coverage.sh` closes the other half of the loop, but not reliably:
+
+```bash
+response=$(curl --user "$RASCURL" --insecure -s -o /dev/null -w "%{http_code}" \
+  "https://localhost/rasdaman/ows?SERVICE=WCS&VERSION=2.0.1&REQUEST=DeleteCoverage&COVERAGEID=${COVERAGEID}")
+```
+
+WCS-T `DeleteCoverage` is documented to remove the coverage's rasdaman collection, its WMS layer (if any), and its petascope metadata as one request — but the two backing stores (`petascopedb` over SQL, rasdaman over `rasql`) aren't one transaction. rasdaman's own issue tracker has a report of exactly this splitting under load: the `petascopedb` row deletes, the `rasql drop collection` step throws a serialization exception because rasdaman is busy with something else (a concurrent ingest, for instance), and the collection survives with nothing pointing at it (rasdaman tracker, ticket #1466 — old, closed as "invalid" by the reporter, and its ticket page wasn't reliably reachable when we checked it, so treat this as a documented failure mode worth knowing about, not a confirmed defect in the version we run).
+
+`delete_coverage.sh` gives you no way to notice if this happens: `-o /dev/null` throws away the response body, so any WCS `ExceptionReport` that would explain a partial failure is discarded; the script checks the HTTP status once with no retry; and there's no follow-up check against `RAS_MDDCOLLNAMES` to confirm the collection is actually gone. A `200` tells you petascope accepted the request, not that both halves of the delete completed.
+
+**Practical takeaway:** don't treat `add_coverage.sh` as protection against re-ingesting into a live coverage, and don't treat a `200` from `delete_coverage.sh` as proof the rasdaman collection is gone — verify independently (`RAS_MDDCOLLNAMES` vs. the `petascopedb` mapping, the same reconciliation this audit runs) before assuming either script did what it was asked.
+
 ### The 1,268 GB collection that isn't on this server's disk
 
 One collection is more than a third of the total by itself: `cmip6_downscaled_tasmax_complete_crstephenson_2025_09_22_12_03_04_2874`, **1,268.0 GB across 163,341,150 tiles.** Its `PhysicalSize` is honest — that much data genuinely exists — but it is not inside rasdaman's own storage. `wcst_import` can ingest "in situ": instead of copying source file bytes into rasdaman, it leaves each tile as a pointer into the original file and records the pointer in `RAS_FILETILES` instead of writing a blob into `RAS_TILES`. This collection is that case, confirmed two ways:
@@ -252,7 +281,7 @@ Two independent problems with real disk consequences, one performance problem wi
 
 **Third, resolve the integrity list** — 11 coverages, mostly a decision about which layer is authoritative, plus one petascope metadata bug worth reporting upstream.
 
-**Fourth, housekeeping**: delete the seven test coverages, commit recipes for the 24 coverages that lack them, and keep the process rule from Finding 1 — `wcst_import` is never run against a coverage that already exists. That rule no longer prevents lost disk space, since Finding 1 showed there wasn't any to lose, but it keeps the tile index clean and avoids finding out the hard way whether a bloated index has some other cost.
+**Fourth, housekeeping**: delete the seven test coverages, commit recipes for the 24 coverages that lack them, and keep the process rule from Finding 1 — `wcst_import` is never run against a coverage that already exists. That rule no longer prevents lost disk space, since Finding 1 showed there wasn't any to lose, but it keeps the tile index clean and avoids finding out the hard way whether a bloated index has some other cost. When deleting any of these, don't trust `delete_coverage.sh`'s exit message alone — Finding 5's tooling note explains why a `200` doesn't guarantee the rasdaman collection is actually gone.
 
 After each change, re-run `rasdaman_tiling_audit.py` and `rasdaman_physical_size.py` against the affected coverages and check both `storage_overhead_factor` (index health) and `PhysicalSize` (real disk).
 
