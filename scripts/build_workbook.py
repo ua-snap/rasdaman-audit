@@ -246,7 +246,7 @@ s = wb.active
 s.title = "Summary"
 s.sheet_view.showGridLines = False
 s["A1"] = "Rasdaman Tiling Audit — zeus.snap.uaf.edu"; s["A1"].font = TITLE
-s["A2"] = "21 Sep 2026, corrected 22 Sep 2026 · 273 coverages · all measured directly · rasdaman v10.4.7"
+s["A2"] = "21 Sep 2026, corrected 22-23 Sep 2026 · 273 coverages · all measured directly · rasdaman v10.4.7"
 s["A2"].font = NOTE
 
 N = len(recs) + 1
@@ -451,7 +451,7 @@ DEFS = [
  ("declared GB (totalSize)", "M", "totalSize from dbinfo. NOT bytes on disk -- it sums every INDEXED tile entry's byte footprint, so a coverage with duplicate index entries reports too high. Kept for transparency; do not quote as disk usage."),
  ("real disk GB (PhysicalSize)", "M", "RAS_MDDOBJECTS.PhysicalSize, read directly from RASBASE. The authoritative disk figure -- matches rasdaman's own UI total to four significant figures when summed across live coverages. Use this column, not declared GB, for any disk-space claim."),
  ("index overhead x", "D", "declared GB / data GB. Above ~1.05 means the tile index has duplicate entries for this coverage (see 'index' column) -- an index-health signal, not a disk-usage one."),
- ("index dup weight GB", "D", "declared GB minus real disk GB. This is INDEX inflation from duplicate entries, confirmed to cost ~0 real bytes on disk for every coverage checked. Do not treat as reclaimable space."),
+ ("index dup weight GB", "D", "declared GB minus real disk GB. Mostly index inflation from duplicate entries (Finding 1); a small share of it, on some coverages, is instead the separate, unexplained gap between logical size and PhysicalSize noted in Finding 1's caveats. Confirmed to cost ~0 real bytes on disk either way. Do not treat as reclaimable space."),
  ("index", "D", "clean or 'duplicate entries'. A coverage with duplicate entries has real disk usage exactly equal to its unique data (Finding 1) -- this flags an index-hygiene / process signal (wcst_import likely re-run against an existing coverage), not a storage problem."),
  ("point amp", "D", "Bytes a single-point time series must read over what it returns. Equals the product of the tile's two spatial extents."),
  ("map amp", "D", "Bytes one full map frame must read over what it returns. Rises as the spatial footprint shrinks — the opposite pressure to point amp."),

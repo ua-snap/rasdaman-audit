@@ -1,6 +1,6 @@
 # Rasdaman Tiling Audit — zeus.snap.uaf.edu
 
-**22 September 2026 · 273 coverages · rasdaman v10.4.7**
+**23 September 2026 · 273 coverages · rasdaman v10.4.7**
 
 This audit examines every coverage on the production rasdaman server: how it is tiled, how much disk it occupies and why, and whether its tiling matches how it is actually queried. It exists to decide what to re-ingest, what to delete, and in what order.
 

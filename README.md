@@ -2,7 +2,7 @@
 
 Tools and findings from an audit of every coverage on SNAP's production rasdaman server (Zeus): how each one is tiled, how much disk it occupies and why, and whether its tiling matches how it is actually queried.
 
-Everything here should be reproducible as of 9/22/26. Any revision to the current collection of coverages will change the audit results. The scripts are Python 3 standard library only (except the workbook builder, which needs `openpyxl`), read-only against Zeus, and re-runnable after any change.
+Everything here should be reproducible as of 9/23/26. Any revision to the current collection of coverages will change the audit results. The scripts are Python 3 standard library only (except the workbook builder, which needs `openpyxl`), read-only against Zeus, and re-runnable after any change.
 
 If you want to run the workbook builder, just clone the base conda environment on Zeus and add the `openpyxl` package:
 
@@ -38,7 +38,7 @@ One 1,268 GB orphan collection turned out to be ingested "in situ" — its tiles
 ```
 docs/          the guide, the audit, and the figures they reference
 scripts/       five read-only audit tools plus the workbook builder
-data/          the inputs and outputs of the 2026-09-21/22 runs
+data/          the inputs and outputs of the 2026-09-21/22/23 runs
 data/tile-dumps/   raw tile domains for seven coverages, gzipped
 data/physical_sizes.csv   every collection's real disk size, from RASBASE
 rasdaman_tiling_audit.xlsx    seven tabs, all live formulas
@@ -160,7 +160,7 @@ grep -a -o '"\[[-0-9:,]*\]"' tiles.json | sort | uniq -c | sort -rn | head
 
 Any count above 1 is a duplicate index entry. If the top line reads `1`, the coverage's index is clean. The `-a` matters: rasql responses contain NUL bytes and GNU grep will otherwise refuse to read them.
 
-Three worked examples are in `data/tile-dumps/`, gzipped.
+Seven worked examples are in `data/tile-dumps/`, gzipped.
 
 ### 6. Rebuild the workbook
 
