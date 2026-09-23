@@ -1,6 +1,6 @@
 # A worked tiling example: `crrel_gipl_outputs_nc`
 
-This is a full, reproducible worked example: one real coverage, two tiling schemes designed from scratch for two different access patterns, both held to the upper limit of rasdaman's 1–4 MB guidance, ready to be ingested as throwaway test coverages and timed against the original. It designs a point-query scheme *and* a map-rendering scheme, both under a strict 4 MB target, and it ends with a place to record what actually happened when they were tested.
+This is a full, reproducible worked example: one real coverage, several tiling schemes designed from scratch for different access patterns, all held to the upper limit of rasdaman's 1–4 MB guidance, ready to be ingested as throwaway test coverages and timed against the original. It designs a point-query scheme, a map-rendering scheme, and a polygon/AOI scheme sized from SNAP's own real query-polygon distribution, and it ends with a place to record what actually happened when they were tested.
 
 > Note that the same process below could be followed using a smaller target (e.g., 1MB) to test performance. This could be especially useful for point queries. 
 
@@ -41,6 +41,8 @@ Ten single-precision float bands, all sharing one `(time, model, scenario, y, x)
 **Bytes per cell is 40, not 4.** Rasdaman tiles the whole struct — every band — together. A tile's byte budget is `(cells in the tile) × (sum of every band's width)`. Sizing against one `float32` band undercounts the real footprint tenfold (guide, section 4).
 
 **Total logical size is 115.109 GB** — `100 × 3 × 2 × 1941 × 2471 × 40` bytes. This is what every tiling scheme below is a rearrangement of. It does not change: tile shape is a read-performance decision, not a storage one (guide, section 6; audit, Finding 1). `RAS_MDDOBJECTS.PhysicalSize` for the live `crrel_gipl_outputs_nc` collection already reads 115,109,064,000 bytes — matching this exactly — so whatever the two new schemes below do to query speed, neither should move that number at all. That is itself worth confirming after ingest (section 8).
+
+**Pixel resolution is 1,000 m (1 km) in both Y and X.** Not given directly anywhere in the recipe or by `ncdump -h`'s header — confirmed by diffing consecutive values from the live source file: `ncdump -v x gipl_outputs_optimized.nc` gives `-979291.709, -978291.709, ...` (spacing exactly 1,000.0), and `ncdump -v y` gives `2374979.751, 2373979.751, ...` (spacing exactly -1,000.0, descending). Needed below for section 5c's polygon scheme, which sizes a tile in real-world meters, not just grid cells.
 
 ---
 
@@ -200,6 +202,32 @@ A condense over `time(0:29)` lands inside one time-block and touches only the 1,
 
 ---
 
+## 5c. Designing a polygon/AOI query scheme
+
+**Access pattern:** pull a real query polygon's footprint (a watershed, borough, climate division, or similar — SNAP's own boundary layer) across the full time series, all models, both scenarios — same non-spatial handling as scheme A (section 4), but the spatial footprint is shaped and sized to a real polygon instead of assumed square.
+
+`utilities/recommend_tiling.py` (see `utilities/README.md`) automates this end to end: it reads a netCDF's real dimensions, band count and dtype directly, converts SNAP's small/medium/large boundary-polygon size classes (`utilities/data/polygon_area_buckets.json` — quantile buckets over ~17,771 real polygons from SNAP's own boundary layer) into grid cells at the file's own resolution and CRS, and solves for a spatial footprint sized to match — no wildcards, every axis fully explicit, for the same reason as every scheme in this document.
+
+```bash
+python3 utilities/recommend_tiling.py --netcdf gipl_outputs_optimized.nc --tile-sizes 4 --condense-n 30
+```
+
+| Bucket | Target footprint (cells, Y × X) | Chunk (time, model, scenario, Y, X) | Tile size |
+|---|---|---|---|
+| small  | 11.3 × 10.9 | 100, 3, 2, 14, 14 | 4.486 MiB |
+| medium | 16.3 × 15.6 | 100, 3, 2, 14, 14 | 4.486 MiB |
+| large  | 31.2 × 30.6 | 100, 3, 2, 14, 14 | 4.486 MiB |
+
+```
+"tiling": "ALIGNED [0:99, 0:2, 0:1, 0:13, 0:13] tile size 4194304"
+```
+
+All three size classes land on the same chunk at this budget. Even a "large" query polygon's footprint (≈31 × 31 cells at this coverage's 1 km resolution) fits inside the ~13-cell-per-side square a 4 MB budget already buys for a single point (scheme A) — the polygon scheme only grows one cell past scheme A's per-side size here, to 14 rather than 13, because it's fitting a slightly non-square target (11.3 × 10.9, etc.) rather than a perfect square. A smaller tile-size budget (1–2 MB, also just a `--tile-sizes` flag away) would show real differentiation between bucket sizes, since the byte budget itself — not the polygon's own footprint — would then be the binding constraint for the larger buckets.
+
+Point/map amplification aren't modelled for this scheme — its target access pattern is neither "one cell" nor "one full frame," so those two formulas don't describe what it's actually built for.
+
+---
+
 ## 6. Side by side
 
 | Scheme | Chunk (time, model, scenario, Y, X) | Tile size | Total tiles | Point amp | Map amp |
@@ -208,6 +236,7 @@ A condense over `time(0:29)` lands inside one time-block and touches only the 1,
 | A — WCS point/time-series | 100, 3, 2, 13, 13 | 3.87 MiB | 28,650 | **169×** | 606× |
 | B — WMS/map | 1, 1, 1, 323, 323 | 3.98 MiB | 33,600 | 104,329× | **1.22×** |
 | B′ — WMS/condense (30-step) | 30, 1, 1, 59, 59 | 3.98 MiB | 33,264 | not modelled (not its job) | 30.2× for a single slice; ≈1.2–2.4× for an aligned 30-step condense |
+| C — polygon/AOI (small/medium/large, 4 MB) | 100, 3, 2, 14, 14 | 4.486 MiB | 24,603 | not modelled (not its job) | not modelled (not its job) |
 
 Read at face value, the current scheme is already close to map-optimal (barely better than the hand-designed scheme B, by sweeping X instead of chunking it) and just as bad for point queries as scheme B — meaning scheme A should be the one that shows the biggest before/after contrast when tested.
 
@@ -215,7 +244,7 @@ Read at face value, the current scheme is already close to map-optimal (barely b
 
 ## 7. Testing — TBD
 
-Not run yet. Record wall-clock time (median of a few runs, not one) for each query against `crrel_gipl_outputs_nc` (current), `crrel_gipl_point_test` (scheme A), and `crrel_gipl_map_test` (scheme B) — and `crrel_gipl_condense_test` (scheme B′) if it gets built.
+Not run yet. Record wall-clock time (median of a few runs, not one) for each query against `crrel_gipl_outputs_nc` (current), `crrel_gipl_point_test` (scheme A), and `crrel_gipl_map_test` (scheme B) — and `crrel_gipl_condense_test` (scheme B′) / `crrel_gipl_polygon_test` (scheme C) if either gets built.
 
 **Representative point/time-series query** — one location, full time series, one band:
 
@@ -239,11 +268,19 @@ return encode((condense + over $t time(0:29)
   using $c[time($t), model(0), scenario(1)]).magt1m_degC / 30, "png")
 ```
 
-| Query | Current | A (point) | B (map) | B′ (condense) | Notes |
-|---|---|---|---|---|---|
-| Point / time-series | | | | | |
-| Full-frame map | | | | | |
-| Condense (30-step) | | | | | |
+**Representative polygon/AOI query** — one medium-sized watershed's bounding box (≈16 × 16 cells at this coverage's 1 km resolution — see section 5c), full time series, one band:
+
+```
+for $c in (crrel_gipl_outputs_nc)
+return encode($c[Y(1000:1015), X(1200:1215)].magt1m_degC, "csv")
+```
+
+| Query | Current | A (point) | B (map) | B′ (condense) | C (polygon) | Notes |
+|---|---|---|---|---|---|---|
+| Point / time-series | | | | | | |
+| Full-frame map | | | | | | |
+| Condense (30-step) | | | | | | |
+| Polygon / AOI (medium) | | | | | | |
 
 TBD — fill in after running.
 
@@ -251,4 +288,4 @@ TBD — fill in after running.
 
 ## Sources
 
-`ncdump -h` output (Josh, this conversation) for the source array shape and bands; `rasdaman-ingest/ardac/gipl/ingest_with_nc.json` for the live `gridOrder`, current tiling string, and the WMS style hooks quoted in section 5b; `data/coverages_summary.csv` for the `sdom`-vs-`DescribeCoverage` disagreement flag and the measured tile count; `data/physical_sizes.csv` for the 115,109,064,000-byte `PhysicalSize` baseline. Chunk-sizing methodology mirrors `scripts/build_workbook.py`'s `recommend()` function and `rasdaman-tiling-guide.md` sections 4 and 6 — see those for the general case this document applies to one specific coverage.
+`ncdump -h` output (Josh, this conversation) for the source array shape and bands; `ncdump -v x`/`ncdump -v y` against the live source file for the 1 km pixel resolution used in section 5c; `rasdaman-ingest/ardac/gipl/ingest_with_nc.json` for the live `gridOrder`, current tiling string, and the WMS style hooks quoted in section 5b; `data/coverages_summary.csv` for the `sdom`-vs-`DescribeCoverage` disagreement flag and the measured tile count; `data/physical_sizes.csv` for the 115,109,064,000-byte `PhysicalSize` baseline. Chunk-sizing methodology for schemes A/B/B′ mirrors `scripts/build_workbook.py`'s `recommend()` function and `rasdaman-tiling-guide.md` sections 4 and 6 — see those for the general case this document applies to one specific coverage. Scheme C (section 5c) and the independent re-check of A/B/B′ (both reproduce exactly) were generated by `utilities/recommend_tiling.py` — see `utilities/README.md`.

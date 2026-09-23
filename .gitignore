@@ -22,5 +22,7 @@ tiles.json
 /utilities/data/boundaries.geojson
 /utilities/data/boundaries.geojson.gz
 
-# Generated test fixture (21 MB) -- regenerate with tests/make_test_netcdf.py
+# Generated test fixtures -- regenerate with tests/make_test_netcdf.py and
+# tests/make_gipl_shape_netcdf.py respectively
 /utilities/tests/synthetic_gipl_like.nc
+/utilities/tests/gipl_shape.nc

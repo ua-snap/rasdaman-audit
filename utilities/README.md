@@ -56,7 +56,7 @@ Current buckets (fetched 2026-09-23, 17,771 valid polygons after dropping a hand
 |---|---|---|---|
 | small  | 5,924 | 61.6 km² | 10.9 km × 11.3 km |
 | medium | 5,923 | 121.1 km² | 15.6 km × 16.3 km |
-| large  | 5,924 | 449.9 km² (max 522,756 km², "Doyon, Limited" — another regional corporation boundary, not excluded; see Known limitations) | 30.6 km × 31.2 km |
+| large  | 5,924 | 449.9 km² (max 522,756 km², "Doyon, Limited"; see Known limitations) | 30.6 km × 31.2 km |
 
 `recommend_tiling.py` converts each bucket's bbox (meters, EPSG:3338) into grid cells at your netCDF's own resolution and CRS via `tiling_lib.polygon_bbox_to_cells()` — this works for a projected or geographic target CRS alike, with no hardcoded meters-per-degree approximation: it builds the box around your file's own spatial centroid and measures it back in your file's native coordinate units through `pyproj`.
 
@@ -72,5 +72,5 @@ python3 recommend_tiling.py --netcdf tests/synthetic_gipl_like.nc --condense-n 1
 ## Known limitations
 
 - Polygon shape is approximated by its bounding box, not its true footprint — a long, thin polygon and a chunky one of the same bbox area get the same recommendation. Reasonable for a first pass; a tighter fit would need the tool to look at more than just width/height.
-- The "large" bucket's area range still spans several orders of magnitude (150 km² to 522,756 km²) even after excluding the single largest outlier, because the source layer mixes boundary types at very different natural scales — HUC watersheds alongside boroughs, climate divisions, fire zones, ecoregions, census areas, and regional Native corporation boundaries (not surveyed exhaustively — see `fetch_boundaries.py`'s docstring). A representative bbox for "large" is necessarily a rougher approximation than for the tighter small/medium buckets, which are almost entirely HUC watersheds.
+- The "large" bucket's area range still spans several orders of magnitude (150 km² to 522,756 km²) even after excluding the single largest outlier (NC12, Aleut Corporation), because the source layer mixes boundary types at very different natural scales — HUC watersheds alongside boroughs, climate divisions, fire zones, ecoregions, census areas, and regional Native corporation boundaries (not surveyed exhaustively — see `fetch_boundaries.py`'s docstring). A representative bbox for "large" is necessarily a rougher approximation than for the tighter small/medium buckets, which are almost entirely HUC watersheds.
 - `--condense-n` is a step *count*, not a calendar unit — if your time axis isn't evenly spaced (irregular `directPositions`, per the guide's section 5), N steps won't necessarily mean N of whatever calendar unit you have in mind. Check your own time axis before picking N.
