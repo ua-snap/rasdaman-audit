@@ -43,6 +43,17 @@ TYPE_NAME = "all_boundaries:all_areas"
 PAGE_SIZE = 1000
 TARGET_CRS = "EPSG:3338"
 
+# Excluded from the size analysis by the feature's own stable `id` field,
+# not by an area threshold (a threshold would silently start excluding
+# different features if the layer changes). 'NC12' is "The Aleut
+# Corporation" -- a Native corporation boundary at ~1.05M km^2, a full
+# order of magnitude past the next-largest polygon in the whole layer
+# (~523K km^2). It's a real polygon, not bad data, but it's a regional
+# corporation boundary, not the kind of query-AOI shape the small/medium/
+# large buckets are meant to represent -- keeping it in skewed "large"
+# toward a shape no realistic query looks like.
+EXCLUDED_IDS = {"NC12"}
+
 HERE = Path(__file__).resolve().parent
 OUT_GEOJSON = HERE / "data" / "boundaries.geojson"
 OUT_BUCKETS = HERE / "data" / "polygon_area_buckets.json"
@@ -96,22 +107,42 @@ def main():
                      help="Seconds to pause between page requests")
     ap.add_argument("--n-buckets", type=int, default=3,
                      help="How many area size classes to split into (small/medium/large = 3)")
+    ap.add_argument("--exclude-ids", default=",".join(sorted(EXCLUDED_IDS)),
+                     help="Comma-separated feature `id`s to drop before computing the "
+                          "size buckets (default: known non-representative outliers, "
+                          "e.g. regional corporation boundaries). Pass '' to keep everything.")
+    ap.add_argument("--skip-fetch", action="store_true",
+                     help="Reuse the existing data/boundaries.geojson instead of "
+                          "re-fetching from the server -- useful for re-deriving buckets "
+                          "(e.g. after changing --exclude-ids) without hitting the WFS again.")
     args = ap.parse_args()
+    exclude_ids = {s for s in args.exclude_ids.split(",") if s}
 
     OUT_GEOJSON.parent.mkdir(parents=True, exist_ok=True)
 
-    features, crs = fetch_all(page_size=args.page_size, sleep_s=args.sleep)
-    print(f"Fetched {len(features)} features total.")
-
-    geojson = {"type": "FeatureCollection", "features": features, "crs": crs}
-    with open(OUT_GEOJSON, "w") as f:
-        json.dump(geojson, f)
-    print(f"Wrote {OUT_GEOJSON} ({OUT_GEOJSON.stat().st_size / 1e6:.1f} MB)")
+    if args.skip_fetch:
+        if not OUT_GEOJSON.exists():
+            raise SystemExit(f"--skip-fetch given but {OUT_GEOJSON} doesn't exist")
+        print(f"Reusing existing {OUT_GEOJSON}")
+    else:
+        features, crs = fetch_all(page_size=args.page_size, sleep_s=args.sleep)
+        print(f"Fetched {len(features)} features total.")
+        geojson = {"type": "FeatureCollection", "features": features, "crs": crs}
+        with open(OUT_GEOJSON, "w") as f:
+            json.dump(geojson, f)
+        print(f"Wrote {OUT_GEOJSON} ({OUT_GEOJSON.stat().st_size / 1e6:.1f} MB)")
 
     # ---- area/bbox stats, reprojected to an equal-area CRS ----
     gdf = gpd.read_file(OUT_GEOJSON)
     gdf = gdf[gdf.geometry.notnull() & gdf.geometry.is_valid]
     gdf = gdf.set_crs("EPSG:4326", allow_override=True) if gdf.crs is None else gdf
+
+    excluded = gdf[gdf["id"].isin(exclude_ids)]
+    if len(excluded):
+        names = ", ".join(f"{r['id']} ({r['name']!r})" for _, r in excluded.iterrows())
+        print(f"\nExcluding {len(excluded)} feature(s) from the size analysis: {names}")
+    gdf = gdf[~gdf["id"].isin(exclude_ids)]
+
     gdf_proj = gdf.to_crs(TARGET_CRS)
 
     areas_m2 = gdf_proj.geometry.area
@@ -148,6 +179,7 @@ def main():
         "crs": TARGET_CRS,
         "method": "quantile classification (equal count per bucket) over polygon area in EPSG:3338",
         "n_polygons_total": int(len(gdf_proj)),
+        "excluded_ids": sorted(exclude_ids),
         "buckets": buckets,
     }
     with open(OUT_BUCKETS, "w") as f:

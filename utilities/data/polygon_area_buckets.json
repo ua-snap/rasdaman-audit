@@ -1,7 +1,10 @@
 {
   "crs": "EPSG:3338",
   "method": "quantile classification (equal count per bucket) over polygon area in EPSG:3338",
-  "n_polygons_total": 17772,
+  "n_polygons_total": 17771,
+  "excluded_ids": [
+    "NC12"
+  ],
   "buckets": {
     "small": {
       "n_polygons": 5924,
@@ -12,20 +15,20 @@
       "bbox_height_m_median": 11292.96965127869
     },
     "medium": {
-      "n_polygons": 5924,
+      "n_polygons": 5923,
       "area_m2_min": 91688996.457095,
-      "area_m2_max": 150496482.6577759,
-      "area_m2_median": 121123322.42537165,
-      "bbox_width_m_median": 15647.704023480059,
-      "bbox_height_m_median": 16286.723930995446
+      "area_m2_max": 150495717.72573352,
+      "area_m2_median": 121122962.51883903,
+      "bbox_width_m_median": 15647.16251375695,
+      "bbox_height_m_median": 16285.769960176433
     },
     "large": {
       "n_polygons": 5924,
-      "area_m2_min": 150504677.92479783,
-      "area_m2_max": 1048692793739.4185,
-      "area_m2_median": 450243035.7487093,
-      "bbox_width_m_median": 30628.603813147434,
-      "bbox_height_m_median": 31172.60615836503
+      "area_m2_min": 150496482.6577759,
+      "area_m2_max": 522755968814.3585,
+      "area_m2_median": 449852689.32919055,
+      "bbox_width_m_median": 30626.762064190872,
+      "bbox_height_m_median": 31163.8941548781
     }
   }
 }
