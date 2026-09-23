@@ -1,8 +1,10 @@
 # A worked tiling example: `crrel_gipl_outputs_nc`
 
-This is a full, reproducible worked example: one real coverage, two tiling schemes designed from scratch for two different access patterns, both held to rasdaman's 1–4 MB guidance, ready to be ingested as throwaway test coverages and timed against the original. It replaces the "Gridded permafrost dataset" example that used to live in `rasdaman-tiling-guide.md` section 7 — the guide now points here instead, because this version goes further: it designs a point-query scheme *and* a map-rendering scheme, both under a strict 4 MB target, and it ends with a place to record what actually happened when they were tested.
+This is a full, reproducible worked example: one real coverage, two tiling schemes designed from scratch for two different access patterns, both held to the upper limit of rasdaman's 1–4 MB guidance, ready to be ingested as throwaway test coverages and timed against the original. It designs a point-query scheme *and* a map-rendering scheme, both under a strict 4 MB target, and it ends with a place to record what actually happened when they were tested.
 
-Everything below either comes from the `ncdump` Josh supplied, from the live ingest recipe (`rasdaman-ingest/ardac/gipl/ingest_with_nc.json`), or from `data/coverages_summary.csv` / `data/physical_sizes.csv` in this repo. Where a number needs a live query to confirm, the exact command is given so this can be re-run against the real server rather than trusted on faith.
+> Note that the same process below could be followed using a smaller target (e.g., 1MB) to test performance. This could be especially useful for point queries. 
+
+Everything below either comes from the `ncdump` of the input netcdf, from the live ingest recipe (`rasdaman-ingest/ardac/gipl/ingest_with_nc.json`), or from `data/coverages_summary.csv` / `data/physical_sizes.csv` in this repo. Where a number needs a live query to confirm, the exact command is given so this can be re-run against the real server (Zeus).
 
 ---
 
@@ -42,9 +44,9 @@ Ten single-precision float bands, all sharing one `(time, model, scenario, y, x)
 
 ---
 
-## 2. Find the *true* storage axis order — carefully, on this coverage
+## 2. Find the true storage axis order
 
-This is the step the guide warns about most (section 9, "axis mismatch"), and `crrel_gipl_outputs_nc` is not a hypothetical case of it: it is one of the eleven catalogue disagreements this audit already flagged (Finding 4) — `data/coverages_summary.csv`'s row for this coverage carries the note `sdom disagrees with DescribeCoverage extent`. Concretely, `DescribeCoverage` reports `gml:axisLabels` as `model scenario time X Y`, but that is **not** the order the tiles are actually stored in. Trusting it here would silently attach every chunk size to the wrong axis — exactly the transposition bug worked through in the guide's old example, except this time it would happen *before* ingest instead of being caught after.
+This is the step the guide warns about most (section 9, "axis mismatch"), and `crrel_gipl_outputs_nc` is not a hypothetical case of it: it is one of the eleven catalogue disagreements this audit already flagged (Finding 4) — `data/coverages_summary.csv`'s row for this coverage carries the note `sdom disagrees with DescribeCoverage extent`. Concretely, `DescribeCoverage` reports `gml:axisLabels` as `model scenario time X Y`, but that is **not** the order the tiles are actually stored in. Trusting it here would silently attach every chunk size to the wrong axis.
 
 The authoritative source is the ingest recipe's own declared `gridOrder`, which is what actually built the array:
 
@@ -72,7 +74,7 @@ curl -u rasadmin:$PASSWORD \
 [0:99,0:2,0:1,0:1940,0:2470]
 ```
 
-Sizes `100, 3, 2, 1941, 2471` in that position order — `time, model, scenario, Y, X` exactly, confirming the recipe's `gridOrder` and ruling out `DescribeCoverage`'s label order. **Every tiling bracket in this document is written in this order: `[time, model, scenario, Y, X]`.** If you re-run this exercise on a different coverage, redo this step first — don't assume `DescribeCoverage`'s axis order is safe to use, because on this exact coverage it isn't.
+Sizes `100, 3, 2, 1941, 2471` in that position order — `time, model, scenario, Y, X` exactly, confirming the recipe's `gridOrder` and ruling out `DescribeCoverage`'s label order. **Every tiling bracket in this document is written in this order: `[time, model, scenario, Y, X]`.** If you re-run this exercise on a different coverage, redo this step first — don't assume `DescribeCoverage`'s axis order is safe to use.
 
 ---
 
@@ -93,8 +95,6 @@ curl -s -u rasadmin:$PASSWORD \
 
 grep -a -o '"\[[-0-9:,]*\]"' /tmp/gipl_tiles.json | head -1
 ```
-
-Josh ran this and got:
 
 ```
 [98:98,2:2,0:0,0:41,0:2470]
@@ -209,107 +209,11 @@ A condense over `time(0:29)` lands inside one time-block and touches only the 1,
 | B — WMS/map | 1, 1, 1, 323, 323 | 3.98 MiB | 33,600 | 62,600,000× | **1.22×** |
 | B′ — WMS/condense (30-step) | 30, 1, 1, 59, 59 | 3.98 MiB | 33,264 | not modelled (not its job) | 30.2× for a single slice; ≈1.2–2.4× for an aligned 30-step condense |
 
-The current scheme's numbers now come from the full tile-domain dump (section 7), not a single sample — confirmed, not provisional. Its amplification figures are unchanged from the single-sample projection because the sampled domain turned out to be the representative case; what the full dump added was the *why* behind the tile count (a genuine non-uniform corner plus 907 duplicate index entries, not one mysterious gap). Read at face value, the current scheme is already close to map-optimal (barely better than the hand-designed scheme B, by sweeping X instead of chunking it) and just as bad for point queries as scheme B — meaning scheme A should be the one that shows the biggest before/after contrast when tested.
-
-Disk usage is not a column here on purpose — per Finding 1, tile shape does not change it, and section 8 checks that directly rather than assuming it.
+Read at face value, the current scheme is already close to map-optimal (barely better than the hand-designed scheme B, by sweeping X instead of chunking it) and just as bad for point queries as scheme B — meaning scheme A should be the one that shows the biggest before/after contrast when tested.
 
 ---
 
-## 7. Resolving the boundary-tile question
-
-Two open discrepancies point at the same underlying question — is `ALIGNED` producing a perfectly uniform grid, or is there real per-boundary variation (or duplicate tile-index entries) that a single sampled domain can't see?
-
-- **`crrel_gipl_outputs_nc` itself** (section 3): one observed domain implies 28,200 tiles; the measured count is 29,109. A 909-tile gap.
-- **`era5_4km_elevation`** (guide, section 3.2): naive geometric tiling implies 16 tiles (`⌈460÷128⌉ × ⌈442÷128⌉`); the measured count is 21. A 5-tile gap, on a coverage with only two axes and no catalogue-disagreement complications — the cleanest possible test case for this question.
-
-Both need the same thing to resolve: not one sampled tile domain, but the *full* list of tile domains `dbinfo` holds for the coverage, so the actual per-tile extents can be inspected directly instead of extrapolated. That list lives at `tiling.tileDomains` in the JSON `dbinfo(c,"printtiles=embedded")` returns — the same field the three existing dumps in `data/tile-dumps/` already use (see `cmip6_fwi.json.gz` for the worked example in the guide).
-
-### Commands
-
-For each coverage, pull the full dump to a file first (same reasoning as section 3 — `-s` suppresses the progress meter, and writing to a file avoids a broken pipe on a response this size), then gzip it into `data/tile-dumps/` under the same naming convention as the existing files:
-
-```bash
-# era5_4km_elevation
-curl -s -u rasadmin:$PASSWORD \
-  --data-urlencode 'query=select dbinfo(c,"printtiles=embedded") from era5_4km_elevation as c' \
-  'https://zeus.snap.uaf.edu/rasdaman/rasql' -o /tmp/era5_4km_elevation_tiles.json
-gzip -c /tmp/era5_4km_elevation_tiles.json > data/tile-dumps/era5_4km_elevation.json.gz
-
-# crrel_gipl_outputs_nc
-curl -s -u rasadmin:$PASSWORD \
-  --data-urlencode 'query=select dbinfo(c,"printtiles=embedded") from crrel_gipl_outputs_nc as c' \
-  'https://zeus.snap.uaf.edu/rasdaman/rasql' -o /tmp/crrel_gipl_outputs_nc_tiles.json
-gzip -c /tmp/crrel_gipl_outputs_nc_tiles.json > data/tile-dumps/crrel_gipl_outputs_nc.json.gz
-```
-
-`crrel_gipl_outputs_nc`'s dump will be noticeably larger than the other three saved dumps (29,109 domain strings vs. cmip6_fwi's ~100K, but each string is longer at 5 axes instead of 2–4) — expect it to take longer than the section 3 single-domain query and to produce a multi-megabyte file even compressed.
-
-Once both `.json.gz` files are in `data/tile-dumps/`, this check answers the open question directly — same field access as sections 3 and 6, generalized to the whole list instead of one entry:
-
-```bash
-python3 -c "
-import gzip, json
-
-for name in ['era5_4km_elevation', 'crrel_gipl_outputs_nc']:
-    obj = json.load(gzip.open(f'data/tile-dumps/{name}.json.gz'))
-    domains = obj['tiling']['tileDomains']
-    print(name)
-    print('  tileNo (reported):', obj.get('tileNo'))
-    print('  domain strings in dump:', len(domains))
-    print('  unique domain strings:', len(set(domains)))
-    print('  duplicates:', len(domains) - len(set(domains)))
-"
-```
-
-If `duplicates` is nonzero, that's the same mechanism Finding 1 documents for the 26 flagged coverages, showing up here too — meaning it isn't confined to the coverages already flagged, and this repo's duplicate-detection sweep (guide, Finding 1's methodology) may need to be re-run without the filter that limited it to those 26. If `duplicates` is zero and the unique count still exceeds the naive geometric prediction, the explanation is genuine non-uniform subdivision at the boundary (worth pulling a handful of the largest and smallest domain extents out of the list by hand to see the actual shape rasdaman chose), not double-counting.
-
-### Results — both dumps obtained, both discrepancies explained, and it's both mechanisms at once
-
-Josh ran the commands above and sent back both `.json.gz` files. Turns out each coverage's gap has a different cause — and `crrel_gipl_outputs_nc` actually shows *both* mechanisms, on the same array.
-
-**`era5_4km_elevation`: zero duplicates, genuinely non-uniform grid.** All 21 domains are unique, and their cell counts sum to exactly 203,320 — `460 × 442`, the array's true size, no overlap, no gap. The real grid isn't "16 tiles, boundary tiles shrunk." It's 16 ordinary tiles (a clean 4×4 grid, shrinking only at the two far edges as the guide's Section 3.2 quotes describe) *plus* 5 more tiles from a single extra row: `Y = 0`, one row, one cell thick, got split off on its own and chunked across `X` on boundaries offset by one from every other row (`0:0, 1:128, 129:256, 257:384, 385:441` instead of the main grid's `0:127, 128:255, 256:383, 384:441`). 16 + 5 = 21. No padding anywhere — confirming the guide's Section 3.2 correction — but a genuinely asymmetric grid, not a uniformly-shrunk one. This is now written up in the guide's Section 3.2, with the figure (`rasdaman-tile-padding.svg`) redrawn directly from this dump — every tile in it is real, not schematic.
-
-**`crrel_gipl_outputs_nc`: both the same corner-row quirk *and* real duplicate index entries.** The dump holds 29,109 domain strings but only 28,202 are unique — 907 duplicates, all repeating exactly 2×. The 28,202 unique domains form an exact, non-overlapping partition of the full 2,877,726,600-cell array: their byte sum is 115,109,064,000, matching `PhysicalSize` (section 1) to the byte, while all 29,109 entries including duplicates sum to 118,874,274,960, matching this dump's own `totalSize` field to the byte. That is exactly Finding 1 / guide Section 3.3's duplicate-index signature — the same proof, on a coverage the original 26-coverage sweep never flagged, because its gap (3.77 GB, ~3.3% of the coverage) is far smaller than what that sweep was tuned to catch. Full writeup, including why this matters for the sweep's coverage, is now in the guide's Section 3.3.
-
-The remaining 9 of the 907 duplicates, and a small non-uniformity in the grid, both trace back to exactly one of the coverage's 600 non-spatial (time, model, scenario) combinations: `(0, 0, 0)`. That combination alone uses an offset Y-partition — a lone `Y = 0:0` row split further into `X = 0:0` (one cell) and `X = 1:2470` (the rest), then 47 Y-blocks starting at `Y = 1` instead of `Y = 0` — the same corner-splitting behavior `era5_4km_elevation` shows, just on a 5-axis array instead of 2. Nine of *that* combination's 47 Y-blocks are themselves double-indexed. The other 898 duplicates (599 at `Y = 672:713`, 299 at `Y = 798:839`) are spread across the other 599 combinations and don't touch the offset partition at all — plain, ordinary duplicate index entries, systematically concentrated at two specific Y-block boundaries rather than randomly scattered, which reads far more like a later ingest pass that re-touched those two spatial strips across nearly the whole time/model/scenario domain than like noise.
-
-**What this settles for the comparison table below:** the "current" scheme's real, full-domain tile count is 29,109 indexed entries / 28,202 unique tiles — the single sampled domain from section 3 turned out to be representative of the ordinary case (chunk `1,1,1,42,2471`, ~4.16 MB), just not of the `(0,0,0)` corner or the 907 duplicated entries layered on top of it. None of this changes section 1's storage-neutrality point — duplicate index entries and non-uniform grids both cost query-time index lookups, not disk, exactly as Finding 1 and Section 3.2 already established.
-
----
-
-## 8. Standing these up as test coverages
-
-Two throwaway coverages, same source file, same everything except `coverage_id` and `tiling`:
-
-```bash
-cp rasdaman-ingest/ardac/gipl/ingest_with_nc.json /tmp/gipl_point_test.json
-cp rasdaman-ingest/ardac/gipl/ingest_with_nc.json /tmp/gipl_map_test.json
-```
-
-In each copy:
-
-- Change `input.coverage_id` — e.g. `crrel_gipl_point_test` and `crrel_gipl_map_test` (and a third, `crrel_gipl_condense_test`, for section 5b if you test it too).
-- Replace `recipe.options.tiling` with the corresponding bracket from section 4, 5, or 5b above.
-- Delete the `hooks` array in both copies — those `curl` calls register WMS styles against `crrel_gipl_outputs_nc` by name; left in, they'd either fail (wrong coverage ID) or silently attach styles to the wrong coverage. Add a plain default style by hand afterward if you want to `GetMap` against the map-test coverage directly.
-- For the point-test coverage, `wms_import` can come out entirely — it isn't going to be queried through WMS.
-
-Then ingest each with `wcst_import.sh` as usual, and — before doing any timing — confirm the disk-neutrality claim directly rather than assuming it carries over from Finding 1's retrospective cases to a fresh ingest:
-
-```sql
-sqlite3 -readonly /opt/rasdaman/data/RASBASE "
-SELECT cn.MDDCollName, sum(o.PhysicalSize) physical_bytes
-  FROM RAS_MDDCOLLNAMES cn
-  JOIN RAS_MDDCOLLECTIONS mc ON mc.MDDCollId = cn.MDDCollId
-  JOIN RAS_MDDOBJECTS o      ON o.MDDId = mc.MDDId
- WHERE cn.MDDCollName IN
-   ('crrel_gipl_outputs_nc', 'crrel_gipl_point_test', 'crrel_gipl_map_test');"
-```
-
-All three should read 115,109,064,000. If they don't, something about this coverage breaks Finding 1's "tile shape is storage-neutral" claim and that is more important than the timing results below.
-
----
-
-## 9. Testing — TBD
+## 7. Testing — TBD
 
 Not run yet. Record wall-clock time (median of a few runs, not one) for each query against `crrel_gipl_outputs_nc` (current), `crrel_gipl_point_test` (scheme A), and `crrel_gipl_map_test` (scheme B) — and `crrel_gipl_condense_test` (scheme B′) if it gets built.
 
