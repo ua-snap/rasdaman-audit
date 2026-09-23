@@ -32,7 +32,7 @@ One 1,268 GB orphan collection turned out to be ingested "in situ" — its tiles
 docs/          the guide, the audit, and the figures they reference
 scripts/       five read-only audit tools plus the workbook builder
 data/          the inputs and outputs of the 2026-09-21/22 runs
-data/tile-dumps/   raw tile domains for three coverages, gzipped
+data/tile-dumps/   raw tile domains for seven coverages, gzipped
 data/physical_sizes.csv   every collection's real disk size, from RASBASE
 rasdaman_tiling_audit.xlsx    seven tabs, all live formulas
 ```
@@ -104,11 +104,12 @@ sqlite3 -readonly /opt/rasdaman/data/RASBASE \
   "SELECT * FROM RAS_MDDCOLLNAMES;" -header -csv > data/rasbase_collections.csv
 ```
 
-Anything in there but not in `mapping.txt` is unreferenced. Price it:
+Anything in there but not in `mapping.txt` is unreferenced. Price it — from RASBASE's own `PhysicalSize`, not `dbinfo`'s `totalSize` (step 4 explains why that distinction matters; pricing off `totalSize` here previously overstated the unreferenced total by about 218 GB):
 
 ```bash
 python3 scripts/rasdaman_price_collections.py \
   --rasql-url https://zeus.snap.uaf.edu/rasdaman/rasql \
+  --rasbase /opt/rasdaman/data/RASBASE \
   --csv data/unreferenced_collections.csv \
   --out data/unreferenced_sizes.csv
 ```

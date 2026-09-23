@@ -1,0 +1,14 @@
+# Python bytecode cache (created just by importing/running the scripts)
+__pycache__/
+*.pyc
+
+# macOS Finder metadata
+.DS_Store
+
+# One-off scratch output from the manual duplicate-index check (README step 5)
+tiles.json
+
+# Default local destination for a fresh rasdaman_tiling_audit.py run
+# (README points --outdir outside the repo, e.g. ~/tiling_audit -- this is
+# just a guard in case it's ever pointed here instead)
+/tiling_audit/

@@ -2,18 +2,39 @@
 """
 rasdaman_price_collections.py
 
-Run dbinfo on a list of rasdaman collections and report what each one costs on
-disk. Built to price the unreferenced collections found by comparing RASBASE's
-RAS_MDDCOLLNAMES against petascope's coverage -> collection mapping.
+Report what each unreferenced rasdaman collection costs on disk, priced from
+RAS_MDDOBJECTS.PhysicalSize in RASBASE -- not from dbinfo()'s totalSize.
 
-Read-only: dbinfo() and sdom(), nothing else. It prints a drop statement per row
-for review, and never executes one.
+Why not dbinfo() for the price
+-------------------------------
+totalSize is a sum over the tile *index*: cells-per-tile x bytes-per-cell x
+the number of INDEXED entries. If a coverage's index has duplicate entries
+(rasdaman-tiling-audit.md, Finding 1 -- happens when wcst_import is re-run
+against a collection that already exists), totalSize is inflated by exactly
+that duplication, sometimes several-fold. PhysicalSize, read directly off
+RAS_MDDOBJECTS, is computed per stored array object and can't be inflated by
+a duplicate index entry, because it isn't summed from index entries at all.
+Earlier versions of this script priced off totalSize and overstated the
+unreferenced-collections total by about 218 GB (3,522.8 GB vs. the real
+3,304.8 GB) -- see rasdaman_physical_size.py's module docstring for the full
+join this script now reuses.
+
+dbinfo() is still used here, best-effort, for `sdom`, `base_type` and `tiles`
+(a raw index-entry count, not a byte figure -- duplicate-index inflation
+doesn't bias it the way it biases totalSize) -- fields RASBASE doesn't carry
+and that are useful for a human reviewing the drop list. If a dbinfo() call
+fails or a collection is missing from RASBASE, the row still gets whatever
+price and review fields are available, with an `error` noting what's missing.
+
+Read-only: RASBASE opened `mode=ro`, and dbinfo()/sdom() over rasql, nothing
+else. It prints a drop statement per row for review, and never executes one.
 
     export RASDAMAN_USER=rasadmin
     export RASDAMAN_PASS='...'
 
     python3 rasdaman_price_collections.py \
         --rasql-url https://zeus.snap.uaf.edu/rasdaman/rasql \
+        --rasbase /opt/rasdaman/data/RASBASE \
         --names rasdaman_unreferenced_names.txt \
         --out unreferenced_sizes.csv
 
@@ -21,6 +42,7 @@ Optionally pass the categorised CSV instead, and the categories are carried
 through to the output:
 
     python3 rasdaman_price_collections.py ... \
+        --rasbase /opt/rasdaman/data/RASBASE \
         --csv rasdaman_unreferenced_collections.csv --out unreferenced_sizes.csv
 """
 
@@ -35,6 +57,8 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from rasdaman_physical_size import connect_ro, physical_sizes
 
 EXC_RE = re.compile(r"<ows:ExceptionText>([\s\S]*?)</ows:ExceptionText>")
 ABSENT = ("object unknown", "collection name unknown", "unknown collection")
@@ -84,8 +108,10 @@ def as_int(v):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Price rasdaman collections with dbinfo.")
-    ap.add_argument("--rasql-url", required=True)
+    ap = argparse.ArgumentParser(description="Price rasdaman collections from RASBASE's PhysicalSize.")
+    ap.add_argument("--rasql-url", required=True, help="Used for sdom/base_type/tiles only, not the price")
+    ap.add_argument("--rasbase", required=True,
+                     help="Path to the RASBASE sqlite file (read-only) -- source of the real price")
     ap.add_argument("--names", help="One collection name per line")
     ap.add_argument("--csv", help="CSV with a 'collection' column (categories carried through)")
     ap.add_argument("--out", required=True)
@@ -95,6 +121,8 @@ def main():
 
     if not args.names and not args.csv:
         ap.error("pass --names or --csv")
+
+    phys_by_name = {r["collection"]: r["physical_bytes"] for r in physical_sizes(connect_ro(args.rasbase))}
     user, pw = os.environ.get("RASDAMAN_USER"), os.environ.get("RASDAMAN_PASS")
     if not user or not pw:
         sys.exit("ERROR: set RASDAMAN_USER and RASDAMAN_PASS first.")
@@ -117,23 +145,27 @@ def main():
     for i, name in enumerate(items, 1):
         row = {"collection": name}
         row.update({k: v for k, v in (extra.get(name) or {}).items() if k != "collection"})
+
+        b = phys_by_name.get(name)
+        row["bytes"] = b
+        row["gb"] = round((b or 0) / 1e9, 3)
+        total += b or 0
+        if b is None:
+            row["error"] = "not found in RASBASE (no RAS_MDDOBJECTS row, or name mismatch)"
+
         try:
             txt = post(args.rasql_url, "select dbinfo(c) from {} as c".format(name),
                        args.timeout, ctx, auth)
             start = txt.find("{")
             obj, _ = json.JSONDecoder().raw_decode(txt[start:]) if start >= 0 else (None, 0)
             if obj is None:
-                row["error"] = "unparseable dbinfo response"
+                row.setdefault("error", "unparseable dbinfo response")
             else:
-                b = as_int(dig(obj, "totalSize"))
-                row["bytes"] = b
-                row["gb"] = round((b or 0) / 1e9, 3)
                 row["tiles"] = as_int(dig(obj, "tileNo"))
                 row["base_type"] = dig(obj, "baseType")
-                total += b or 0
         except Exception as exc:
             msg = str(exc)
-            row["error"] = ("collection no longer exists" if
+            row.setdefault("error", "collection no longer exists" if
                             any(a in msg.lower() for a in ABSENT) else msg[:200])
         try:
             row["sdom"] = re.search(r"\[[^\]]*\]", post(

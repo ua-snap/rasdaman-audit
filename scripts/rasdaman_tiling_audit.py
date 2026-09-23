@@ -272,14 +272,36 @@ def parse_ranges(s):
     return [int(h) - int(l) + 1 for l, h in pairs] if pairs else None
 
 
-def parse_tile_config(s, extents=None):
+def parse_tile_config(s, extents=None, bytes_per_cell=None, budget=None):
     """Parse a tileConfiguration into a per-axis chunk list.
 
-    rasdaman may report an unbounded axis as `0:*` or `*:*`. Matching only
-    numeric ranges silently DROPS those positions, yielding a short vector
-    that no longer lines up with the axes -- which quietly disables every
-    per-axis check. An unbounded axis means the tile spans it wholly, so
-    resolve it to that axis's extent.
+    rasdaman may report an unbounded axis as `0:*` or `*:*`. dbinfo echoes
+    this literal wildcard even when rasdaman has ALREADY resolved it
+    internally to a concrete chunk size to fit the tiling's byte budget --
+    it does NOT mean "this axis is unbounded in storage." An earlier version
+    of this function resolved a wildcard to that axis's FULL extent, on the
+    theory that "unbounded means the tile spans it wholly." That is wrong
+    for exactly the coverages this matters most for: any `ALIGNED [0:*, ...]`
+    declaration where rasdaman shrank an axis to hit a ~1-4 MB tile budget
+    (which is the entire point of the wildcard). For crrel_gipl_outputs_nc
+    this inflated computed tile_extents from the real, tile-dump-confirmed
+    (1, 1, 1, 42, 2471) up to the full (100, 3, 2, 1941, 2471) array --
+    overstating point_query_amplification by about 3,000x (see
+    CRREL_GIPL_tiling.md and rasdaman-tiling-audit.md's Finding 2 for the
+    real, hand-verified numbers this was checked against).
+
+    When a byte budget and bytes-per-cell are available, solve each
+    wildcard axis from the budget instead, using the SAME isotropic-split
+    math as estimate_aligned_shape() (exact for a single wildcard axis;
+    approximate, and known to be so, when several axes are wildcards at
+    once -- rasdaman actually fills wildcard axes in gridOrder sequence
+    rather than splitting the budget evenly across them, so for a
+    multi-wildcard coverage this is a much closer estimate than "full
+    extent" but still not exact; sample real tile domains with
+    --verify-tiles-all for the exact shape). Without a budget, a wildcard
+    position is left unresolved (None) -- unresolved is safer than
+    silently wrong, and downstream code already treats a None-containing
+    shape as "could not compute."
     """
     if not s:
         return None
@@ -287,16 +309,27 @@ def parse_tile_config(s, extents=None):
     parts = [p.strip() for p in (m.group(1) if m else s).split(",") if p.strip()]
     if not parts:
         return None
-    out = []
+    out, wild = [], []
     for i, p in enumerate(parts):
         rng = RANGE_RE.findall(p)
         if rng:
             lo, hi = rng[0]
             out.append(int(hi) - int(lo) + 1)
-        elif "*" in p:
-            out.append(extents[i] if extents and i < len(extents) else None)
         else:
             out.append(None)
+            wild.append(i)  # '*' or anything else unparseable as a range
+
+    if not wild:
+        return out
+    if not (bytes_per_cell and budget):
+        return None  # wildcard present but no budget to solve it from
+
+    fixed = product([c for c in out if c]) or 1
+    remaining = max(1, budget // (bytes_per_cell * fixed))
+    per = remaining if len(wild) == 1 else max(1, int(round(remaining ** (1.0 / len(wild)))))
+    for i in wild:
+        cap = extents[i] if extents and i < len(extents) else None
+        out[i] = max(1, min(per, cap)) if cap else max(1, per)
     return out
 
 
@@ -799,9 +832,19 @@ def analyze(cid, dbinfo_obj, sdom_text, describe, declared):
         conf = find_first(dbinfo_obj, "tileConfiguration")
         row["tile_configuration"] = conf if isinstance(conf, str) else ""
         row["declared_tile_size_bytes"] = as_int(find_first(dbinfo_obj, "tileSize"))
-        tile_shape = parse_tile_config(row["tile_configuration"], extents)
+        tile_shape = parse_tile_config(row["tile_configuration"], extents,
+                                        bytes_per_cell, row["declared_tile_size_bytes"])
         if tile_shape:
-            tiling_source = "dbinfo (measured)"
+            n_wild = row["tile_configuration"].count("*")
+            if n_wild == 0:
+                tiling_source = "dbinfo (measured)"
+            elif n_wild == 1:
+                tiling_source = "dbinfo (measured pinned axes, budget-derived wildcard)"
+            else:
+                tiling_source = "dbinfo (measured pinned axes, approximate multi-wildcard)"
+        elif "*" in row["tile_configuration"]:
+            row["note"] = ((row.get("note", "") + "; ") if row.get("note") else "") + \
+                "wildcard tileConfiguration could not be resolved (missing bytes/cell or tile-size budget)"
 
         # sdom is the stored array's own extent; prefer it over petascope's view
         if sdom_text:
@@ -1380,13 +1423,41 @@ def main():
                                max_bytes=int(args.verify_max_mb * 1048576))
                     doms = sample_tile_domains(vt)
                     ext_now = [int(v) for v in row.get("grid_extents", "").split(",") if v.strip()]
-                    tile_shape_now = parse_tile_config(row.get("tile_configuration", ""), ext_now)
+                    tile_shape_now = parse_tile_config(row.get("tile_configuration", ""), ext_now,
+                                                        row.get("bytes_per_cell"),
+                                                        row.get("declared_tile_size_bytes"))
                     stats = analyze_tile_domains(doms, describe.get("grid_axes") or [],
                                                  tile_shape_now, ext_now)
                     row.update(stats)
                     if stats.get("partition_homogeneous") == "no":
                         row["note"] = ((row.get("note", "") + "; ") if row.get("note") else "") + \
                             "{} distinct tile shapes in sample".format(stats.get("distinct_tile_shapes"))
+
+                    # A sampled modal shape is ground truth, not an estimate --
+                    # prefer it over parse_tile_config's isotropic-split guess
+                    # for tile_extents/amplification. This matters most for a
+                    # multi-wildcard ALIGNED declaration (every axis `0:*`),
+                    # where the isotropic split is only approximate because
+                    # rasdaman actually fills wildcard axes in gridOrder
+                    # sequence, not evenly (see parse_tile_config's docstring;
+                    # crrel_gipl_outputs_nc is the confirmed worked example in
+                    # CRREL_GIPL_tiling.md).
+                    modal = stats.get("modal_tile_shape")
+                    bpc = row.get("bytes_per_cell")
+                    if modal and bpc:
+                        sampled_shape = [int(v) for v in modal.split(",")]
+                        if len(sampled_shape) == len(ext_now):
+                            row["tile_extents"] = modal
+                            row["tiling_source"] = "dbinfo (measured, confirmed by tile-domain sample)"
+                            cells = product(sampled_shape)
+                            row["cells_per_tile"] = cells
+                            row["computed_bytes_per_tile"] = cells * bpc
+                            for mode, prefix in (("point", "point_query"), ("map", "map_query")):
+                                tiles, read, amp = amplification(
+                                    ext_now, sampled_shape, describe.get("grid_axes") or [], bpc, mode)
+                                row[prefix + "_tiles"] = tiles
+                                row[prefix + "_bytes_read"] = read
+                                row[prefix + "_amplification"] = amp
                 except Exception as exc:
                     error_fh.write("{}: verify-tiles failed: {}\n".format(cid, exc))
 

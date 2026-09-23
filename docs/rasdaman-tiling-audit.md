@@ -104,7 +104,7 @@ Checked against all 26 coverages this audit had flagged by the `totalSize` test,
 
 Not one of the 26 shows a `PhysicalSize` between the two figures, or above `totalSize`. Every gap is exactly, and only, duplicate index weight. `scripts/rasdaman_physical_size.py` reproduces this whole table from RASBASE directly — see the [Method section](#method-and-what-these-numbers-do-not-prove) for the full query and how to run it.
 
-**209 of 273 live coverages (77%) carry at least one duplicate index entry.** Only 64 have a clean, 1:1 index. Total phantom `totalSize` inflation across all 273 is 4,406.7 GB.
+**247 of 273 coverages have a clean, 1:1 tile index (index inflation does not exceed 1.05×).** The other 26 carry duplicate entries. Total phantom `totalSize` inflation across all 273 — clean and dirty coverages alike, since even a clean index carries a little rounding noise — is 4,406.7 GB.
 
 But what to do about it? **Nothing, for disk space**  — `PhysicalSize` is the real number to use in the census.
 
@@ -132,7 +132,7 @@ The decisive test would be to ingest a throwaway coverage, measure it, re-run th
 
 **Still avoid re-running `wcst_import` against a coverage that already exists.** It costs nothing to follow this rule, and while we now know it doesn't cost disk, we have not checked whether a bloated spatial index costs anything in query latency — an R+-tree with sixteen entries for one region might do sixteen times the lookup work even though the underlying blob is fetched once. That's an open question, not a settled one, and the cheapest way to not need an answer is to not create the duplicate entries in the first place. Delete a coverage before re-ingesting it, or ingest under a new name and swap.
 
-247 of 273 coverages have a clean, 1:1 tile index. The 26 that don't are listed on the spreadsheet's Coverages tab; none of them need action for storage reasons.
+247 of 273 coverages have a clean, 1:1 tile index (index inflation does not exceed 1.05×). The 26 that don't are listed on the spreadsheet's Coverages tab; none of them need action for storage reasons.
 
 ## Finding 2 — Tiling fights the access pattern
 
@@ -230,7 +230,7 @@ Fifty of the 105 are 1 MB or smaller — four-byte stubs left by failed ingests.
 
 **45 coverages declare no tiling** and took rasdaman's default. On the evidence of Finding 1 that costs them nothing in storage, and rasdaman's default choice is a reasonable ~4 MB cube — but it is unexamined, and for point-query coverages it is the wrong shape (see the first row of Finding 2's table).
 
-**Seven test coverages are live in the public catalogue**, holding 512 GB: `crrel_gipl_outputs_nc_regular_1_test` (255 GB), `crrel_gipl_outputs_nc_regular_2_test` (132 GB), `cp_test_gipl` (119 GB), `conus_hydro_segments_jp_test` and `_insitu` (2.7 GB each), `hydro_dh3_test`, and `cmip6_downscaled_tasmax_v2_wms_test`. They appear in `GetCapabilities`, so external clients can see and query them.
+**Seven test coverages are live in the public catalogue**, holding 351 GB: `crrel_gipl_outputs_nc_regular_1_test` (115.0 GB), `crrel_gipl_outputs_nc_regular_2_test` (115.1 GB), `cp_test_gipl` (115.1 GB), `conus_hydro_segments_jp_test` and `_insitu` (2.7 GB each), `hydro_dh3_test` (0.5 GB), and `cmip6_downscaled_tasmax_v2_wms_test` (0 GB — a 1×1×1×1×1 stub). They appear in `GetCapabilities`, so external clients can see and query them.
 
 ---
 

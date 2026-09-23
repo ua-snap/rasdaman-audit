@@ -100,7 +100,7 @@ grep -a -o '"\[[-0-9:,]*\]"' /tmp/gipl_tiles.json | head -1
 [98:98,2:2,0:0,0:41,0:2470]
 ```
 
-Read in `[time, model, scenario, Y, X]` order: time and model and scenario each pinned to one index, Y chunked to 42 rows, **X swept in full** (`0:2470` is all 2,471 columns). Chunk `(1, 1, 1, 42, 2471)` — `103,782` cells, `4.16 MB` — is under budget, and structurally it's much closer to a map-style tiling (non-spatial pinned, spatial large) than a point-style one, just an asymmetric band rather than a square: sweeping the *last* wildcarded axis in full and only partly chunking the one before it is consistent with rasdaman's `ALIGNED` algorithm filling axes in `gridOrder` sequence rather than packing a 2-D spatial block. Projected against this shape (same formulas as sections 4–5): point amplification ≈62,600,000× (a time series would hit up to 600 separate tiles), map amplification ≈1.02× — close to the theoretical floor, slightly better than the hand-designed scheme B below.
+Read in `[time, model, scenario, Y, X]` order: time and model and scenario each pinned to one index, Y chunked to 42 rows, **X swept in full** (`0:2470` is all 2,471 columns). Chunk `(1, 1, 1, 42, 2471)` — `103,782` cells, `4.16 MB` — is under budget, and structurally it's much closer to a map-style tiling (non-spatial pinned, spatial large) than a point-style one, just an asymmetric band rather than a square: sweeping the *last* wildcarded axis in full and only partly chunking the one before it is consistent with rasdaman's `ALIGNED` algorithm filling axes in `gridOrder` sequence rather than packing a 2-D spatial block. Projected against this shape (same formulas as sections 4–5): point amplification 103,782× (a time series touches 600 separate tiles, each 103,782 cells, for a query that wants 600 — the tile count cancels the query's own multiplier, leaving one tile's cell count as the amplification), map amplification ≈1.02× — close to the theoretical floor, slightly better than the hand-designed scheme B below.
 
 **Confirmed against the full tile-domain dump (section 7):** this single sampled domain is representative of 599 of the coverage's 600 (time, model, scenario) combinations — chunk `1, 1, 1, 42, 2471` really is the ordinary shape. The naive extrapolation from it (`⌈1941÷42⌉ × 100 × 3 × 2 = 28,200` tiles) undercounts the real, measured 29,109 for two reasons, now both identified rather than lumped into one unexplained gap: one combination — `(time=0, model=0, scenario=0)` — uses a different, offset partition entirely (the same corner-splitting behavior `era5_4km_elevation` shows independently, section 7), and 907 of the 29,109 indexed entries are plain duplicate index entries (28,202 unique domains, not 28,200 or 29,109 — Finding 1's mechanism, guide Section 3.3, now confirmed on this coverage too). Section 7 has the full breakdown.
 
@@ -166,7 +166,7 @@ side    = floor(sqrt(104,857))  = 323
 
 **Projected map amplification:** ≈1.22× — rendering a full frame touches just 56 tiles and reads almost exactly the frame's own cell count. This is close to the theoretical floor (1×) and is what "large spatial footprint, non-spatial pinned to one" buys you.
 
-**Projected point amplification if this same tiling were used for a time series:** ≈62,600,000× — a single point's 100-step time series would touch 600 separate tiles (one per time/model/scenario combination), each dragging along a 323×323 spatial block it doesn't need. Do not point this scheme at point queries; it is built for exactly one job.
+**Projected point amplification if this same tiling were used for a time series:** 104,329× — a single point's 100-step time series would touch 600 separate tiles (one per time/model/scenario combination), each dragging along a 323×323 spatial block it doesn't need. Do not point this scheme at point queries; it is built for exactly one job.
 
 ### 5b. A variant worth testing: the condense window
 
@@ -204,9 +204,9 @@ A condense over `time(0:29)` lands inside one time-block and touches only the 1,
 
 | Scheme | Chunk (time, model, scenario, Y, X) | Tile size | Total tiles | Point amp | Map amp |
 |---|---|---|---|---|---|
-| Current (as ingested) | 1, 1, 1, 42, 2471 (599/600 combos; one combo offset — section 7) | 4.16 MB typical / 28,202 unique domains confirmed | 29,109 indexed (28,202 unique + 907 duplicate entries — section 7) | ≈62,600,000× | ≈1.02× |
+| Current (as ingested) | 1, 1, 1, 42, 2471 (599/600 combos; one combo offset — section 7) | 4.16 MB typical / 28,202 unique domains confirmed | 29,109 indexed (28,202 unique + 907 duplicate entries — section 7) | 103,782× | ≈1.02× |
 | A — WCS point/time-series | 100, 3, 2, 13, 13 | 3.87 MiB | 28,650 | **169×** | 606× |
-| B — WMS/map | 1, 1, 1, 323, 323 | 3.98 MiB | 33,600 | 62,600,000× | **1.22×** |
+| B — WMS/map | 1, 1, 1, 323, 323 | 3.98 MiB | 33,600 | 104,329× | **1.22×** |
 | B′ — WMS/condense (30-step) | 30, 1, 1, 59, 59 | 3.98 MiB | 33,264 | not modelled (not its job) | 30.2× for a single slice; ≈1.2–2.4× for an aligned 30-step condense |
 
 Read at face value, the current scheme is already close to map-optimal (barely better than the hand-designed scheme B, by sweeping X instead of chunking it) and just as bad for point queries as scheme B — meaning scheme A should be the one that shows the biggest before/after contrast when tested.
