@@ -697,8 +697,19 @@ def detect_axis_mismatch(extents, tile_shape, axes, wildcards=None,
 DOMAIN_RE = re.compile(r"\[-?\d+:-?\d+(?:,-?\d+:-?\d+)*\]")
 
 
-def sample_tile_domains(text, limit=20000):
+def sample_tile_domains(text, limit=2000000):
     """Pull tile domains out of a printtiles response (possibly only its head).
+
+    The real cap on how much gets read is --verify-max-mb, applied when the
+    response is fetched -- that's the network-cost control. This `limit` is
+    just a backstop against parsing a pathological response, not a second
+    sampling control layered on top: a coverage whose full domain list
+    already fit inside --verify-max-mb (most of them; domain strings are a
+    few dozen bytes each) should not have that already-downloaded data
+    silently thrown away by a low default here. cmip6_fwi's 266,724 domains
+    fit in a few MB of text and were previously truncated to the first
+    20,000 by this default, which is not what --verify-max-mb was set to
+    control.
 
     This is what catches partition drift that tileConfiguration cannot show:
     a coverage grown by repeated updates can hold several tile shapes at once
@@ -1458,6 +1469,22 @@ def main():
                                 row[prefix + "_tiles"] = tiles
                                 row[prefix + "_bytes_read"] = read
                                 row[prefix + "_amplification"] = amp
+
+                            # per_axis_divisibility/blocks_per_axis/axes_with_padding
+                            # were computed against the pre-sample shape inside
+                            # analyze(); redo them against the real sampled shape
+                            # so they describe what rasdaman actually built, not
+                            # the estimate the sample just replaced.
+                            if len(ext_now) == len(sampled_shape):
+                                flags, blocks = [], []
+                                for real, chunk in zip(ext_now, sampled_shape):
+                                    if not chunk:
+                                        flags.append("?"); blocks.append("?"); continue
+                                    flags.append("ok" if real % chunk == 0 else "PAD")
+                                    blocks.append(str(int(math.ceil(float(real) / chunk))))
+                                row["per_axis_divisibility"] = ",".join(flags)
+                                row["blocks_per_axis"] = ",".join(blocks)
+                                row["axes_with_padding"] = sum(1 for f in flags if f == "PAD")
                 except Exception as exc:
                     error_fh.write("{}: verify-tiles failed: {}\n".format(cid, exc))
 
