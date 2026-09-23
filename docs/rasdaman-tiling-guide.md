@@ -6,18 +6,6 @@ Read this before the [tiling audit](rasdaman-tiling-audit.md), which applies the
 
 ---
 
-## 0. Coverage vs. collection
-
-Mixing these up is the fastest way to misread everything below.
-
-- **Coverage** is petascope's word, and the OGC WCS standard's. A coverage has a `COVERAGEID`, is built with `InsertCoverage` (what `wcst_import` sends under the hood), removed with `DeleteCoverage`, and described with `DescribeCoverage`. Its metadata — extents, axis labels, the `crs` string, null values, and a pointer to where the actual data lives — is a row in `petascopedb`, an ordinary PostgreSQL database.
-- **Collection** is rasdaman's own word for the stored array itself: what `rasql` addresses as `COLLECTION`, and what `RAS_MDDCOLLNAMES` catalogues inside RASBASE (a SQLite file, not something you connect to as a database server). rasdaman has no concept of "coverage" at all — that's a layer petascope adds on top of it.
-- **The two are joined by one pointer, not fused into one system.** `petascopedb`'s `coverage` table links to `rasdaman_range_set.collection_name` — a single row saying "coverage X's data lives in collection Y." Nothing else connects them, and nothing guarantees the pointer stays correct: `wcst_import` doesn't reliably name the collection after the coverage (Section 9 has the mapping query), and the ordinary day-to-day tooling for creating and deleting coverages can silently move or drop that pointer without touching the other side — see the audit doc's Finding 5 for what that looks like in practice.
-
-This repo uses **coverage** only for the petascope/OGC-layer object and **collection** only for the rasdaman-layer array, consistently across every doc here. Keep the two straight, especially once they start appearing in the same sentence.
-
----
-
 ## 1. The one idea everything rests on
 
 **A tile is the smallest unit rasdaman reads.** Ask for a single cell and the server fetches, decompresses and hands back the entire tile containing it.
