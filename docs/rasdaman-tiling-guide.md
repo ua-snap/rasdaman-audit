@@ -210,11 +210,27 @@ So if not boundary padding, what *does* distinguish them? Two things, and rasdam
 
 **Using `"irregular": true` on an axis does not rule out `REGULAR` tiling.** That flag lives in the recipe's `axes` block and governs how petascope declares the axis's real-world CRS coordinate values — a plain min/max/resolution sequence versus an explicit `directPositions` list, needed when dimensions are categorical lookups (like `model` and `scenario`) or when `time` is given as actual dates rather than a fixed step. The tiling bracket operates entirely in a different space — integer grid-index counts — and nothing in rasdaman's Storage Layout Language documentation ties the two together.
 
-For example:
+**The two "regular/irregular" vocabularies come from two different guides, and they aren't describing the same thing.** The Query Language Guide's Storage Layout Language section defines tiling's regular/irregular split by tile *geometry* — nothing about axes or coordinates:
+
+> "A tiling is aligned if tiles are defined through axis-parallel hyperplanes cutting all through the domain. Aligned tiling is further classified into **regular** and **aligned irregular** depending on whether the parallel hyperplanes are equidistant (except possibly for border tiles) or not." — *Query Language Guide*, Storage Layout Language, §4.20.1
+
+The Geo Services Guide's ingest-recipe `axes` block defines a completely separate regular/irregular split, by axis *coordinate spacing*:
+
+> "`resolution` — The resolution of the axis from the input file; if this axis is irregular, the resolution is set to 1 ... `irregular` — Set to true to specify that this axis is irregular, e.g. a time axis with irregular datetime indexes; if not specified, it is set to false by default." — *Geo Services Guide*, §5.9.12 (`general_coverage` recipe)
+
+Neither section cross-references the other, and two of Rasdaman's own worked examples confirm neither constrains the other in practice: a GRIB import declares `"tiling": "REGULAR [0:0, 0:20, 0:1023, 0:1023]"` with no irregular axes at all, while a separate netCDF import with an explicit `"irregular": true` time axis declares `"tiling": "ALIGNED [0:13, 0:999, 0:999] TILE SIZE 4000000"`. Neither choice was forced by the other.
+
+More examples, from SNAP's own production recipes:
 - `REGULAR` + `irregular:true` + `directPositions`, together: 5 of the `rasdaman-ingest` repo's 6 `REGULAR`-tiled recipes do exactly this. `ardac/hydroviz/arctic/stats_mhit.json` declares `"tiling": "REGULAR [0:6, 0:2, 0:0, 0:1] tile size 1048576"` at the top level and, in the same file, its `stream_id` axis has `"irregular": true` and `"directPositions": "${netcdf:variable:stream_id}"`. It's live in production right now.
 - `ALIGNED` with zero irregular axes: `era5_4km_elevation`'s  recipe uses `"tiling": "ALIGNED [0:127, 0:127] tile size 65536"` with both its `X` and `Y` axes as plain min/max/resolution. No irregular key anywhere in the file.
 
 Checking these working ingests directly, it appears that `ALIGNED` doesn't require irregular, and `REGULAR` doesn't forbid it.
+
+**What `irregular`, `resolution`, and `directPositions` actually do together, on one axis.** A regular axis's full coefficient list is *computed*: `min`, `min + resolution`, `min + 2·resolution`, ... up to `max`. An irregular axis has no such formula, so `resolution` is accepted but meaningless there (forced to `1` internally, per the quote above) and something else has to supply the real values. Which mechanism you need depends on how the source data arrives:
+- **The axis's whole coefficient list already exists inside one input file** (e.g. a netCDF file with an internal irregular time dimension) — supply `directPositions`, computed from that file's own values, as in the netCDF example quoted above.
+- **Each input file contributes exactly one coefficient** (e.g. a date parsed out of each filename, with `"data_bound": false`) — no `directPositions` needed at all; `wcst_import` appends one coefficient per file as it imports, incrementally.
+
+`areas_of_validity` / `validity` are further, irregular-axis-only adjuncts on top of this (mutually exclusive with each other): by default an irregular coefficient is a single point, so slicing must hit it exactly; these settings extend each coefficient into a `[start, end]` interval instead.
 
 **When to use each?** Rasdaman's own tiling guidelines single out `REGULAR` for this case: *not* knowing the query shape, or a client that always requests same-size regions —
 

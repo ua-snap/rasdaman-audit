@@ -203,7 +203,7 @@ Separate from anything inside a live coverage, rasdaman's catalogue holds **105 
 
 ### Why these come to exist: the ingest/delete tooling has no safety net
 
-The two scripts operators actually run — `/usr/local/bin/add_coverage.sh` (wraps `wcst_import.sh`) and `/usr/local/bin/delete_coverage.sh` (wraps WCS-T `DeleteCoverage`) — aren't part of this repo, but reading them explains most of the categories above. (See the [tiling guide's coverage-vs-collection note](rasdaman-tiling-guide.md#0-coverage-vs-collection) for what a "coverage" and a "collection" each are and how loosely they're joined — that's the gap these two scripts fall into.)
+The two scripts operators actually run — `/usr/local/bin/add_coverage.sh` (wraps `wcst_import.sh`) and `/usr/local/bin/delete_coverage.sh` (wraps WCS-T `DeleteCoverage`) — aren't part of this repo, but reading them explains most of the categories above. (See the README's [Terminology: coverage vs. collection](../README.md#terminology-coverage-vs-collection) for what a "coverage" and a "collection" each are and how loosely they're joined — that's the gap these two scripts fall into.)
 
 `add_coverage.sh` is a one-line wrapper:
 
