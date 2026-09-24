@@ -68,16 +68,26 @@ numbers behind it. **[docs/CRREL_GIPL_tiling.md](docs/CRREL_GIPL_tiling.md)** wa
 
 ### 0. Credentials
 
-Every script reads the same two environment variables and sends them as HTTP basic auth. Everything is read-only. Nothing is ever written to the database.
+Scripts read the following environment variables. Scripts are all read-only. Nothing is ever written to the database.
 
+#### Rasdaman
 ```bash
 export RASDAMAN_USER=rasadmin
 export RASDAMAN_PASS='...'
 ```
 
+#### Petascope
+(populate from petascope's own properties file)
+
+```bash
+export PGHOST=localhost
+export PGPORT=5432
+export PGUSER=petauser
+```
+
 ### 1. Get the coverage → collection mapping
 
-This is the step that makes everything else work, and it needs read access to `petascopedb` — ordinary PostgreSQL, no sudo required. Set `PGHOST`/`PGPORT`/`PGUSER` from petascope's own properties file (`/opt/rasdaman/etc/petascope.properties`, which carries the JDBC URL and credentials), then:
+This is the step that makes everything else work, and it needs read access to `petascopedb` — ordinary PostgreSQL, no sudo required. You will need to enter the petascope password.
 
 ```bash
 psql -Atc "
