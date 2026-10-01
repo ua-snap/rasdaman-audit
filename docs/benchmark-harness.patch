@@ -1,0 +1,241 @@
+diff --git a/benchmarks/analyze_wcs_results.py b/benchmarks/analyze_wcs_results.py
+index 4ddb15a..21a5a33 100644
+--- a/benchmarks/analyze_wcs_results.py
++++ b/benchmarks/analyze_wcs_results.py
+@@ -153,6 +153,8 @@ def main() -> int:
+         df.groupby("coverageId")
+         .agg(
+             count_used=("coverageId", "size"),
++            # results are chronological, so the first request is the cold-cache one
++            latency_first_ms=("latency_ms", "first"),
+             latency_mean_ms=("latency_ms", "mean"),
+             latency_p95_ms=("latency_ms", p95),
+             throughput_mean_bps=("throughput_bps", "mean"),
+@@ -182,7 +184,12 @@ def main() -> int:
+             print(f"[WARN] Failed to read/merge coverages CSV: {exc}")
+ 
+     # Round metrics for readable output.
+-    for col in ["latency_mean_ms", "latency_p95_ms", "throughput_mean_bps"]:
++    for col in [
++        "latency_first_ms",
++        "latency_mean_ms",
++        "latency_p95_ms",
++        "throughput_mean_bps",
++    ]:
+         if col in summary.columns:
+             summary[col] = summary[col].round(0).astype("Int64")
+     summary["success_rate"] = summary["success_rate"].round(1)
+diff --git a/benchmarks/analyze_wms_results.py b/benchmarks/analyze_wms_results.py
+index 2815f4c..ebff3f8 100644
+--- a/benchmarks/analyze_wms_results.py
++++ b/benchmarks/analyze_wms_results.py
+@@ -153,6 +153,8 @@ def main() -> int:
+         df.groupby("coverageId")
+         .agg(
+             count_used=("coverageId", "size"),
++            # results are chronological, so the first request is the cold-cache one
++            latency_first_ms=("latency_ms", "first"),
+             latency_mean_ms=("latency_ms", "mean"),
+             latency_p95_ms=("latency_ms", p95),
+             throughput_mean_bps=("throughput_bps", "mean"),
+@@ -182,7 +184,12 @@ def main() -> int:
+             print(f"[WARN] Failed to read/merge coverages CSV: {exc}")
+ 
+     # Round metrics for readable output.
+-    for col in ["latency_mean_ms", "latency_p95_ms", "throughput_mean_bps"]:
++    for col in [
++        "latency_first_ms",
++        "latency_mean_ms",
++        "latency_p95_ms",
++        "throughput_mean_bps",
++    ]:
+         if col in summary.columns:
+             summary[col] = summary[col].round(0).astype("Int64")
+     summary["success_rate"] = summary["success_rate"].round(1)
+diff --git a/benchmarks/build_wcs_benchmark_requests.py b/benchmarks/build_wcs_benchmark_requests.py
+index be049c0..79c547d 100644
+--- a/benchmarks/build_wcs_benchmark_requests.py
++++ b/benchmarks/build_wcs_benchmark_requests.py
+@@ -138,11 +138,23 @@ def main() -> int:
+         default=None,
+         help="Random seed for reproducible jitter locations",
+     )
++    ap.add_argument(
++        "--match",
++        default=None,
++        help="Only include coverage IDs matching this regex (e.g. '^crrel_gipl_outputs_nc')",
++    )
++    ap.add_argument(
++        "--keep-twins",
++        action="store_true",
++        help="Keep base coverages even when an optimized '_wcs' twin exists",
++    )
+     args = ap.parse_args()
+ 
+     rng = random.Random(args.seed)
+ 
+     df = pd.read_csv(args.in_csv)
++    if args.match:
++        df = df[df["coverageId"].astype(str).str.contains(args.match, regex=True)]
+ 
+     # only retain the "_wcs" twin when both base and optimized coverage IDs exist.
+     s = df["coverageId"].astype(str)
+@@ -151,6 +163,8 @@ def main() -> int:
+     # keep all "_wcs" rows; for non-_wcs rows, drop if a twin "_wcs" exists
+     has_wcs_twin = base.map((s.str.endswith("_wcs")).groupby(base).any())
+     keep = s.str.endswith("_wcs") | ~has_wcs_twin
++    if args.keep_twins:
++        keep[:] = True
+     df_filtered = df.loc[keep].copy()
+ 
+     out_rows = []
+diff --git a/benchmarks/build_wms_benchmark_requests.py b/benchmarks/build_wms_benchmark_requests.py
+index e5790bc..58cf71e 100644
+--- a/benchmarks/build_wms_benchmark_requests.py
++++ b/benchmarks/build_wms_benchmark_requests.py
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env python3
+ """
+ Build WMS 1.3.0 GetMap query strings for benchmarking.
+-Generates one request per coverage and writes them to a CSV
++Generates one or more requests per coverage and writes them to a CSV
+ with coverageId and wms_query columns.
+ """
+ 
+@@ -18,6 +18,7 @@ def build_wms_query(
+     bbox: str,
+     crs: str,
+     axis_params: Dict[str, str],
++    style: str = "",
+ ) -> str:
+     """Build the query string for a WMS GetMap request."""
+     params = [
+@@ -31,7 +32,7 @@ def build_wms_query(
+         ("HEIGHT", 600),
+         ("FORMAT", "image/png"),
+         ("TRANSPARENT", "true"),
+-        ("STYLES", ""),
++        ("STYLES", style),
+     ]
+     for name, value in axis_params.items():
+         params.append((name, value))
+@@ -130,21 +131,63 @@ def main() -> int:
+         default="zeus_wms_benchmark_requests.csv",
+         help="Output CSV with WMS query strings",
+     )
++    ap.add_argument(
++        "--match",
++        default=None,
++        help="Only include coverage IDs matching this regex (e.g. '^crrel_gipl_outputs_nc')",
++    )
++    ap.add_argument(
++        "--keep-twins",
++        action="store_true",
++        help="Keep base coverages even when an optimized '_wms' twin exists",
++    )
++    ap.add_argument(
++        "--num-requests",
++        dest="num_requests",
++        type=int,
++        default=1,
++        help="Number of (identical) requests to generate per coverage",
++    )
++    ap.add_argument(
++        "--style",
++        action="append",
++        default=[],
++        help="WMS style to request. Either STYLE for all coverages or COVERAGE=STYLE "
++        "to override one coverage. Can be repeated.",
++    )
++    ap.add_argument(
++        "--no-dims",
++        action="store_true",
++        help="Omit non-spatial axis params (e.g. for WCPS fragment styles that subset those axes themselves)",
++    )
+     args = ap.parse_args()
+ 
++    default_style = ""
++    style_overrides: Dict[str, str] = {}
++    for spec in args.style:
++        if "=" in spec:
++            cov, style = spec.split("=", 1)
++            style_overrides[cov] = style
++        else:
++            default_style = spec
++
+     df = pd.read_csv(args.in_csv)
++    if args.match:
++        df = df[df["coverageId"].astype(str).str.contains(args.match, regex=True)]
+ 
+     # Only retain the "_wms" twin when both base and optimized coverage IDs exist.
+     s = df["coverageId"].astype(str)
+     base = s.str.replace(r"_wms$", "", regex=True)
+     has_wms_twin = base.map((s.str.endswith("_wms")).groupby(base).any())
+     keep = s.str.endswith("_wms") | ~has_wms_twin
++    if args.keep_twins:
++        keep[:] = True
+     df_filtered = df.loc[keep].copy()
+ 
+     out_rows = []
+     for _, r in df_filtered.iterrows():
+-        # Skip WCS optimized coverages for WMS benchmarking.
+-        if "wcs" in r["coverageId"]:
++        # Skip WCS optimized and polygon coverages for WMS benchmarking.
++        if "wcs" in r["coverageId"] or "polygon" in r["coverageId"]:
+             continue
+ 
+         spec = spatial_spec_from_row(r)
+@@ -154,7 +197,7 @@ def main() -> int:
+         decimals = 0 if spec["is_projected"] else 4
+         axis_order = "yx" if str(spec["epsg"]) == "4326" else "xy"
+         crs = f"EPSG:{spec['epsg']}"
+-        axis_params = non_spatial_param_set(r)
++        axis_params = {} if args.no_dims else non_spatial_param_set(r)
+ 
+         lower = r["xy_lower"] if spec["is_projected"] else r["wgs84_lower"]
+         upper = r["xy_upper"] if spec["is_projected"] else r["wgs84_upper"]
+@@ -169,8 +212,12 @@ def main() -> int:
+             bbox=bbox,
+             crs=crs,
+             axis_params=axis_params,
++            style=style_overrides.get(str(r["coverageId"]), default_style),
++        )
++        out_rows.extend(
++            {"coverageId": r["coverageId"], "wms_query": wms_query}
++            for _ in range(args.num_requests)
+         )
+-        out_rows.append({"coverageId": r["coverageId"], "wms_query": wms_query})
+ 
+     if not out_rows:
+         print("Warning: No request strings were generated.")
+diff --git a/benchmarks/wms_benchmarks.jmx b/benchmarks/wms_benchmarks.jmx
+index f6050f0..05e5417 100644
+--- a/benchmarks/wms_benchmarks.jmx
++++ b/benchmarks/wms_benchmarks.jmx
+@@ -23,7 +23,7 @@
+         <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="CSV Data Set Config">
+           <stringProp name="delimiter">,</stringProp>
+           <stringProp name="fileEncoding"></stringProp>
+-          <stringProp name="filename">zeus_wms_benchmark_requests.csv</stringProp>
++          <stringProp name="filename">${__P(requests,zeus_wms_benchmark_requests.csv)}</stringProp>
+           <boolProp name="ignoreFirstLine">true</boolProp>
+           <boolProp name="quotedData">false</boolProp>
+           <boolProp name="recycle">false</boolProp>
+@@ -34,7 +34,7 @@
+         <hashTree/>
+         <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults">
+           <intProp name="HTTPSampler.connect_timeout">10000</intProp>
+-          <intProp name="HTTPSampler.response_timeout">120000</intProp>
++          <intProp name="HTTPSampler.response_timeout">600000</intProp>
+           <stringProp name="HTTPSampler.domain">zeus.snap.uaf.edu</stringProp>
+           <stringProp name="HTTPSampler.protocol">https</stringProp>
+           <stringProp name="HTTPSampler.path">/rasdaman/ows</stringProp>
+@@ -89,7 +89,7 @@
+               <connectTime>true</connectTime>
+             </value>
+           </objProp>
+-          <stringProp name="filename">zeus_wms_benchmark_results.jtl</stringProp>
++          <stringProp name="filename">${__P(jtl,zeus_wms_benchmark_results.jtl)}</stringProp>
+         </ResultCollector>
+         <hashTree/>
+       </hashTree>

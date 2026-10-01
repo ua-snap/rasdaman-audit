@@ -9,7 +9,7 @@ Read [`../docs/rasdaman-tiling-guide.md`](../docs/rasdaman-tiling-guide.md) firs
 1. **point** — single x/y, every non-spatial axis (time + anything else) kept whole inside the tile, spatial footprint as small as the budget allows.
 2. **polygon** — same non-spatial handling as point, but the spatial footprint is shaped and sized to match a real query polygon (small/medium/large, drawn from SNAP's own boundary layer — see `fetch_boundaries.py`) instead of a generic square.
 3. **map** — every non-spatial axis (including time) pinned to one index, spatial footprint as large as the budget allows.
-4. **wcps_condense** — like `map`, but the time axis is chunked to a window of `N` steps instead of pinned to one (e.g. a 30-year climatology, or a 12-month-to-annual condense). `N` is never guessed — you always pass it.
+4. **wcps_condense** — like `map`, but the time axis is chunked to a window of `N` steps instead of pinned to one (e.g. a 30-year climatology, or a 12-month-to-annual condense). `N` is never guessed — you always pass it. **Benchmark before adopting one:** the only real test so far, a 30-step window on `crrel_gipl_outputs_nc`, rendered 30-year condense maps about 14× slower than both a plain `map` scheme and the original tiling (docs/CRREL_GIPL_tiling.md, section 7).
 
 ## Setup
 
