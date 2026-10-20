@@ -194,7 +194,7 @@ Rasdaman's guidance is that **1–4 MB per tile is optimal in most cases**.
 tile bytes = (product of the tile's per-axis extents) × (sum of every band's byte width)
 ```
 
-**Every band counts!** Rasdaman's Storage Layout Language paper makes this unambiguous with its own worked example: a 3-band RGB image tiled 512 × 512 declares `tile size 786432`, and 512 × 512 × 3 × 1 byte = 786,432 exactly.
+**⭐️ Every band counts!** Rasdaman's Storage Layout Language paper makes this unambiguous with its own worked example: a 3-band RGB image tiled 512 × 512 declares `tile size 786432`, and 512 × 512 × 3 × 1 byte = 786,432 exactly.
 
 For a 10-band `float32` coverage that is **40 bytes per cell**, not 4. Planning against one band's width under-counts the real footprint by the band count — a tenfold error that no validation catches, because nothing was technically violated.
 
