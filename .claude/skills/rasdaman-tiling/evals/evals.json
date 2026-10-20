@@ -1,0 +1,54 @@
+{
+  "skill_name": "rasdaman-tiling",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "design-point-tiling-from-ncdump",
+      "prompt": "I'm writing a wcst_import recipe for a new downscaled daily dataset going onto zeus. The data portal will mostly hit it for point time series (click a spot on the map, get the whole daily record). Here's the ncdump -h:\n\n```\nnetcdf cmip6_downscaled_daily_MIROC6_ssp245 {\ndimensions:\n\ttime = 31390 ;\n\ty = 443 ;\n\tx = 460 ;\nvariables:\n\tint64 time(time) ;\n\tdouble y(y) ;\n\tdouble x(x) ;\n\tfloat pr(time, y, x) ;\n\tfloat tasmax(time, y, x) ;\n\tfloat tasmin(time, y, x) ;\n// global attributes:\n\t\t:crs = \"EPSG:3338\" ;\n}\n```\n\nThe crs line in my recipe is `OGC/0/AnsiDate?axis-label=\"time\"@EPSG/0/3338`. What should I put for \"tiling\"? Give me the exact string to paste.",
+      "expected_output": "A fully explicit ALIGNED bracket in gridOrder (time, y, x) keeping time whole, sized against 12 bytes/cell (all three bands), near 4 MB: ALIGNED [0:31389, 0:2, 0:2] tile size ~3390120. Warns against wildcards/REGULAR, notes map queries will be bad and suggests a separate map coverage, and advises not re-ingesting into an existing ID / testing first.",
+      "files": [],
+      "expectations": [
+        "Recommended tiling keeps the whole time axis (0:31389) inside one tile",
+        "Bracket positions follow gridOrder: time first, then y, then x",
+        "Bytes per cell computed from all three bands (12 bytes), not one band (4)",
+        "Recommended spatial chunk is 3x3 or smaller, so the real tile is <= 4 MiB at 12 bytes/cell",
+        "Every axis has explicit bounds (no 0:* wildcard) in the recommended string",
+        "Recommends ALIGNED, not REGULAR",
+        "Warns that map/WMS rendering will be slow with this tiling (or suggests a separate map coverage)"
+      ]
+    },
+    {
+      "id": 2,
+      "eval_name": "totalsize-panic-and-cleanup",
+      "prompt": "our rasdaman disk on zeus is getting full. i ran `select dbinfo(c) from tas_2km_projected_wcs as c` and totalSize is like 2.3 TB which seems insane for that dataset. should we re-ingest it with bigger tiles to get space back? and more generally whats the safest way to find stuff on the server we can actually delete? i have read access to petascopedb and can read /opt/rasdaman/data/RASBASE",
+      "expected_output": "Explains totalSize sums the tile index (duplicate entries) and is not disk; real figure is RAS_MDDOBJECTS.PhysicalSize (~313 GB for this coverage); re-tiling/re-ingesting won't reclaim space. For cleanup: get coverage->collection mapping from petascopedb, diff against RAS_MDDCOLLNAMES to find orphans, price by PhysicalSize, check RAS_FILETILES for in-situ before counting GB, verify oid against rasdaman_range_set, have a human run drops; and don't trust delete_coverage.sh 200.",
+      "files": [],
+      "expectations": [
+        "States dbinfo totalSize is not real on-disk usage (it sums tile-index entries / duplicates)",
+        "Points to RAS_MDDOBJECTS.PhysicalSize in RASBASE as the real disk figure",
+        "Advises against re-ingesting or re-tiling to reclaim space",
+        "Gives the petascopedb coverage -> rasdaman_range_set collection mapping query",
+        "Finds orphan candidates by diffing RAS_MDDCOLLNAMES against the petascope mapping",
+        "Warns that in-situ / RAS_FILETILES collections free no rasdaman disk when dropped",
+        "Opens RASBASE read-only (e.g. sqlite3 -readonly)",
+        "Leaves any drop/delete to human review after verification rather than running it"
+      ]
+    },
+    {
+      "id": 3,
+      "eval_name": "review-flawed-gipl-recipe",
+      "prompt": "Can you sanity check the tiling in this recipe before I kick off the full ~115 GB ingest? It's the GIPL permafrost output. I want it fast for point/time-series queries. Plan is to just run add_coverage.sh with this over the existing crrel_gipl_outputs_nc coverage so the portal picks it up without changing anything.\n\nncdump -h says every one of the 10 variables (magt05m_degC ... talikthickness_m, all float) is declared `(time, model, scenario, y, x)` with time=100, model=3, scenario=2, y=1941, x=2471.\n\nRelevant recipe bits:\n```json\n\"coverage_id\": \"crrel_gipl_outputs_nc\",\n\"crs\": \"OGC/0/Index1D?axis-label=\\\"model\\\"@OGC/0/Index1D?axis-label=\\\"scenario\\\"@OGC/0/AnsiDate?axis-label=\\\"time\\\"@EPSG/0/3338\",\n\"tiling\": \"REGULAR [0:2, 0:1, 0:99, 0:31, 0:31] tile size 4194304\",\n\"axes\": {\n  \"time\": {\"gridOrder\": 0, \"irregular\": true, ...},\n  \"model\": {\"gridOrder\": 1, \"irregular\": true, ...},\n  \"scenario\": {\"gridOrder\": 2, \"irregular\": true, ...},\n  \"Y\": {\"gridOrder\": 3, ...},\n  \"X\": {\"gridOrder\": 4, ...}\n}\n```\nI sized the tile as 3*2*100*32*32*4 bytes = ~2.4 MB so it should be comfortably under 4 MB.",
+      "expected_output": "Catches: bracket written in crs order not gridOrder (positions 0-2 attach 3,2,100 to time,model,scenario); tile size ignores 10 bands (40 bytes/cell -> ~24.6 MB, way over 4 MB); REGULAR on non-dividing extents risks OOM on Zeus, use ALIGNED; irregular:true doesn't force/forbid either; recommends ALIGNED [0:99, 0:2, 0:1, 0:12, 0:12] tile size 4056000; do NOT re-run wcst_import/add_coverage.sh over the existing coverage ID \u2014 ingest under a new ID and swap/delete first.",
+      "files": [],
+      "expectations": [
+        "Identifies that the bracket is written in crs order instead of gridOrder",
+        "Points out the tile size ignores the 10 bands (40 bytes/cell, real tile ~10x larger than planned)",
+        "Recommends ALIGNED instead of REGULAR for this non-dividing grid / ingest-memory risk",
+        "Does not claim that irregular:true axes force or forbid REGULAR/ALIGNED",
+        "Corrected bracket keeps time, model, scenario whole in positions 0-2 ([0:99, 0:2, 0:1, ...])",
+        "Corrected spatial footprint keeps the tile <= ~4 MiB at 40 bytes/cell (13x13 or smaller)",
+        "Warns against running add_coverage.sh/wcst_import over the existing coverage ID; suggests a new ID or deleting first"
+      ]
+    }
+  ]
+}
