@@ -1,11 +1,11 @@
 ---
 name: rasdaman-tiling
-description: Operational know-how for SNAP's rasdaman/petascope server (Zeus) — choosing a tiling for a wcst_import ingest recipe, sizing tiles, checking what an existing coverage actually built, measuring real disk usage, finding orphaned collections, and safely re-ingesting or deleting coverages. Use this whenever someone is writing or reviewing a rasdaman ingest recipe ("tiling", "gridOrder", ALIGNED/REGULAR, "tile size"), asks why a coverage is slow for point or map queries, reads dbinfo/totalSize output, wants to know how much disk a coverage or collection uses, is cleaning up RASBASE, is about to re-run wcst_import or add_coverage.sh/delete_coverage.sh, or is benchmarking WCS/WMS/WCPS performance on Zeus — even if they don't say "tiling" explicitly.
+description: Operational know-how for SNAP's rasdaman/petascope server (Zeus) — choosing a tiling for a wcst_import ingest recipe, sizing tiles, checking what an existing coverage actually built, measuring real disk usage, finding orphaned collections, and safely re-ingesting or deleting coverages. Use this whenever someone is writing or reviewing a rasdaman ingest recipe ("tiling", "gridOrder", ALIGNED/REGULAR, "tile size"), asks why a coverage is slow for point or map queries, reads dbinfo/totalSize output, wants to know how much disk a coverage or collection uses, is cleaning up RASBASE, is about to re-run wcst_import or add_coverage.sh/delete_coverage.sh, is writing coverage metadata (descriptions, abstracts, netCDF attributes) for an ingest, sees GetCoverage/WCPS encode() return HTTP 200 with an empty body, or is benchmarking WCS/WMS/WCPS performance on Zeus — even if they don't say "tiling" explicitly.
 ---
 
 # rasdaman tiling & coverage operations
 
-This distills a full audit of the 273 coverages on SNAP's production rasdaman server (`zeus.snap.uaf.edu`, rasdaman v10.4.7, Sept 2026) plus a benchmarked worked example. The source repo is `rasdaman-audit`. Its docs (`docs/rasdaman-tiling-guide.md`, `docs/rasdaman-tiling-audit.md`, `docs/CRREL_GIPL_tiling.md`, `docs/benchmark-harness.md`) are the long-form versions of everything here. If you're working inside that repo, prefer its scripts and docs for depth.
+This distills a full audit of the 273 coverages on SNAP's production rasdaman server (`zeus.snap.uaf.edu`, rasdaman v10.4.7, Sept 2026) plus a benchmarked worked example. The source repo is `rasdaman-audit`. Its docs (`docs/rasdaman-tiling-guide.md`, `docs/rasdaman-tiling-audit.md`, `docs/CRREL_GIPL_tiling.md`, `docs/benchmark-harness.md`, `docs/rasdaman-metadata-into.md`) are the long-form versions of everything here. If you're working inside that repo, prefer its scripts and docs for depth.
 
 Several conclusions here contradict what rasdaman's own outputs seem to say (`totalSize`, `DescribeCoverage` axis order). Rely on the measured findings below, and say so when you correct someone.
 
@@ -46,7 +46,8 @@ Several conclusions here contradict what rasdaman's own outputs seem to say (`to
    - Estimate logical size: product of extents × bytes per cell.
    - Test on a subset; a bad choice is expensive to discover halfway through a multi-hundred-GB run.
    - Ingest under a **new coverage ID**. Never re-run `wcst_import` against an existing coverage (see the hygiene section).
-7. **After ingest, verify.** Run the five checks in `references/verify-and-audit.md`, and spot-check one known coordinate against the source file to confirm axis order.
+   - **Keep the word "into" out of all metadata**: the recipe's `metadata` and every netCDF attribute wcst_import copies (band, axis, grid-mapping and global). See "Empty responses" below.
+7. **After ingest, verify.** Run the five checks in `references/verify-and-audit.md`, and spot-check one known coordinate against the source file to confirm axis order. Then confirm the coverage actually encodes with a one-cell probe (`references/verify-and-audit.md` §10).
 
 For the full worked example (GIPL: ncdump → gridOrder → 4 schemes → measured results), read `references/design-worked-example.md`.
 
@@ -70,10 +71,23 @@ For the full worked example (GIPL: ncdump → gridOrder → 4 schemes → measur
 3. Compare against how the coverage is actually queried. Mismatches run to 10³–10⁵×. On Zeus, 52 of 253 modelled coverages read more than 1,000× what a typical query returns.
 4. Amplification is a *ranking*, not a benchmark. On GIPL a 615× amplification gap became a ~5× latency gap, and two map predictions were wrong. Benchmark before adopting (see `references/benchmarking.md`).
 
+## Empty responses: the word "into" in metadata
+
+If a coverage's metadata contains **" into "** (an ASCII space on each side, any case), every request that *encodes* it returns **HTTP 200 with an empty body**: GetCoverage as JSON/GeoTIFF/netCDF, and WCPS `encode()`. There is no exception report. DescribeCoverage, WMS GetMap, GML GetCoverage and unencoded WCPS scalars keep working, so the coverage looks healthy. Clients fail far from the cause (e.g. `TypeError: Cannot read properties of null (reading 'split')`).
+
+- **This was reproduced on Zeus on 2026-11-11 without any ingest.** It hit CMIP6 `evspsbl` ("flux of water into the atmosphere"), CMIP6 FWI `isi` ("does not take fuel type into account") and `environmental_hazard_index_test`.
+- **Only " into " matters.** `insert`, `values`, `drop`, `create`, `update`, `delete`, `alter`, `commit`, `select`, `from` and `where` were tested and have no effect. Don't tell users to avoid them. "into" next to a tab, a newline or punctuation, or at the very start or end of a value, didn't trigger it either. The simple rule is still "reword every into" (to "to", "in", or a rephrase).
+- **Mechanism (inferred, not confirmed in source):** petascope copies the metadata into the rasql query it builds for `encode()`. A substring check for " into " then probably classifies the query as a write (`SELECT ... INTO`), which returns no array.
+- **The text usually comes from netCDF attributes, not the recipe.** With a netCDF slicer and no explicit `metadata.bands`, wcst_import copies every attribute of every band variable (`description`, `comment`, ...). Check `ncdump -h`, not just the recipe.
+- **Fix:** reword at the source (in a copy of the netCDF, never the source dataset), then **delete the coverage and re-ingest**. Never re-run wcst_import on top of it.
+- **If encodes come back empty and there's no "into" in the metadata**, this isn't the cause; look elsewhere.
+
+Check and probe commands are in `references/verify-and-audit.md` §10.
+
 ## Reference files (read when needed)
 
 - `references/design-worked-example.md`: the GIPL walkthrough, scheme math, and measured vs. modelled results. Read it when designing a tiling or explaining why one was chosen.
-- `references/verify-and-audit.md`: the coverage → collection mapping query, `dbinfo` fields, the five post-ingest checks, the credential-free WCPS probe, the duplicate-index check, the RASBASE `PhysicalSize` and in-situ queries, and the audit scripts. Read it for any "what was actually built / how big is it / what can we drop" question.
+- `references/verify-and-audit.md`: the coverage → collection mapping query, `dbinfo` fields, the five post-ingest checks, the credential-free WCPS probe, the duplicate-index check, the RASBASE `PhysicalSize` and in-situ queries, the audit scripts, and the metadata "into" check and one-cell encode probe. Read it for any "what was actually built / how big is it / what can we drop / why is the response empty" question.
 - `references/benchmarking.md`: the JMeter harness and its gotchas, such as an empty `STYLES=` silently rendering a 30-year condense, cold vs. warm caches, and builders that skip IDs containing `test`. Read it before timing anything.
 - `references/zeus-findings.md`: the audit snapshot (as of 2026-09-23). It has headline numbers, known problem coverages, and open questions. These numbers go stale whenever coverages change, so cite them with their date and re-run the scripts for current figures.
 

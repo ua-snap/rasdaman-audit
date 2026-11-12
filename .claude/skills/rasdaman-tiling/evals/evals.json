@@ -49,6 +49,22 @@
         "Corrected spatial footprint keeps the tile <= ~4 MiB at 40 bytes/cell (13x13 or smaller)",
         "Warns against running add_coverage.sh/wcst_import over the existing coverage ID; suggests a new ID or deleting first"
       ]
+    },
+    {
+      "id": 4,
+      "eval_name": "empty-getcoverage-into-metadata",
+      "prompt": "Weird one on zeus. I just ingested snow_cover_days_test and DescribeCoverage looks fine, WMS GetMap renders fine, but any GetCoverage with format=application/json (or image/tiff) comes back 200 with Content-Length: 0 and no error. The portal throws `TypeError: Cannot read properties of null (reading 'split')`. Other coverages work with the exact same request. The recipe doesn't set band metadata. The netCDF band variable has `description = \"Number of days with snow cover. Values are counted per water year, taking partial years into account.\"`. Is this a tiling problem? Should I just re-run add_coverage.sh with a different tiling?",
+      "expected_output": "Not tiling. The netCDF description contains \" into \" (space on each side), which wcst_import copies into band metadata; petascope puts metadata into the rasql encode query and every encoded response comes back empty. Only \"into\" matters, not \"values\". Reword (e.g. 'accounting for partial years') in a copy of the netCDF, delete the coverage and re-ingest rather than re-running add_coverage.sh over it, then confirm with a one-cell encode probe.",
+      "files": [],
+      "expectations": [
+        "Says the cause is the word \"into\" in the coverage metadata, not tiling",
+        "Explains the text reached the coverage from the netCDF band attribute (wcst_import copies band attributes when the recipe sets no band metadata)",
+        "Does not claim \"values\" (or other rasql keywords) is a cause or must be removed",
+        "Recommends rewording the description to remove \"into\"",
+        "Recommends deleting the coverage and re-ingesting rather than re-running add_coverage.sh/wcst_import over the existing ID",
+        "Edits a copy of the netCDF rather than the source dataset, or otherwise avoids modifying source data",
+        "Suggests verifying afterwards with an encoded request (e.g. a one-cell GetCoverage/WCPS encode probe)"
+      ]
     }
   ]
 }

@@ -45,6 +45,12 @@ These figures go stale as soon as coverages change. Quote them with their date, 
    - 45 declare no tiling and got rasdaman's default (~4 MB cubes, the wrong shape for point queries).
    - 7 test coverages (351 GB) are visible in the public `GetCapabilities`.
 
+## Later observations (2026-11-11)
+
+- **Metadata "into" scan.** Of 294 coverages, none had "into" in its metadata; the three coverages it broke had been reworded and re-ingested. 292 passed the one-cell encode probe.
+- **Two coverages fail to encode.** `conus_hydro_segments_jp_test` and `conus_hydro_segments_jp_test_insitu` return HTTP 500 `Referenced file not found or not readable`. They are in-situ coverages whose source files are gone.
+- **17 coverages use "values" in their descriptions** and all of them encode fine. This is evidence that the other rasql keywords are harmless.
+
 ## Recommended sequence (from the audit)
 
 1. Drop orphans: stubs first, then the in-situ orphan (catalog cleanup, ~0 GB), then the rest, largest first. Each drop needs `oid` verification and an in-situ check first.
@@ -60,3 +66,4 @@ These figures go stale as soon as coverages change. Quote them with their date, 
 - Does `REGULAR` get a faster computed index (`rc_index`)? Claimed only on an old wiki page. Dump a `REGULAR` coverage's `dbinfo` `index.type` to check.
 - Does `drop collection` return its blob space to the filesystem immediately? No drop has been measured yet. Record `df`/`du` of the TILES directory before and after the first one.
 - What explains the 421.9 GB by which `PhysicalSize` falls below logical size across 41 coverages? Unexplained.
+- Where exactly does petascope's " into " check live? The trigger is measured, but the mechanism (a substring test classifying the encode query as a write) hasn't been confirmed in the source or in the petascope/rasserver logs. The petascope log line for one failing request would settle it.

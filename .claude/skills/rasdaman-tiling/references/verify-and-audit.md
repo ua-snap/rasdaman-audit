@@ -17,6 +17,7 @@ Credentials come from env vars: `RASDAMAN_USER`/`RASDAMAN_PASS` for rasql, and `
 7. In-situ (file-referenced) collections
 8. Orphaned collections and safe deletion
 9. The audit scripts (rasdaman-audit repo)
+10. Metadata check and one-cell encode probe
 
 ## 1. Coverage → collection mapping
 
@@ -61,7 +62,7 @@ The fields that matter:
 4. **Which axis is in which bracket position?** Read `tiling.tileDomains` and match the distinct values at each position against known axis cardinalities. A position cycling through 2–3 values is a small categorical axis.
 5. **Is this even the right array?** Cross-check the domain with the WCPS probe (section 4) and the mapping (section 1).
 
-Also spot-check one known coordinate's value against the source netCDF.
+Also spot-check one known coordinate's value against the source netCDF, and confirm the coverage encodes with the one-cell probe in section 10.
 
 ## 4. Credential-free WCPS probe
 
@@ -151,5 +152,44 @@ All are Python 3 stdlib and read-only. All but the workbook builder support `--s
 | `rasdaman_collection_reconcile.py` | Petascope vs. rasdaman divergence: matched, collision, renamed, shadow | `--url ... --outdir ... --mapping-file mapping.txt` |
 | `rasdaman_collection_discover.py` | Guesses naming rules when `petascopedb` is unreachable | Not needed if you have the mapping |
 | `build_workbook.py` | Rebuilds `rasdaman_tiling_audit.xlsx` (needs `openpyxl`) | Reads `data/*.csv` |
+| `rasdaman_metadata_check.py` | Finds "into" in coverage metadata and probes each hit with a one-cell `encode()`; `--text` scans a recipe or `ncdump -h` output (exits 1 on a hit). No credentials. About 1 min for every coverage. | `--coverage ID --probe all` / `--out check.csv` / `ncdump -h f.nc \| python3 scripts/rasdaman_metadata_check.py --text -` |
 
 After any re-tile, delete or re-ingest, re-run the audit and `physical_size` for the affected coverages.
+
+## 10. Metadata check and one-cell encode probe
+
+" into " (an ASCII space on each side, any case) anywhere in a coverage's metadata makes every encoded response HTTP 200 with an empty body. SKILL.md has the symptoms and the rule.
+
+**Before ingest.** wcst_import copies band, axis, grid-mapping and global netCDF attributes into the metadata, so scan both sources:
+
+```bash
+ncdump -h source.nc | grep -inw into
+grep -inw into recipe.json
+```
+
+**After ingest, or on any existing coverage.** Encode a single cell. It needs no credentials. Take the axis labels from `<gml:axisLabels>` and the indices from `<gml:low>` in DescribeCoverage, and write one `LABEL:"CRS:1"(index)` per axis. Index-CRS subsets mean time and irregular axes need no coordinate formatting.
+
+```bash
+curl -sS https://zeus.snap.uaf.edu/rasdaman/ows \
+  --data-urlencode service=WCS --data-urlencode version=2.0.1 \
+  --data-urlencode request=ProcessCoverages \
+  --data-urlencode 'query=for $c in (COVERAGE_ID) return encode($c[X:"CRS:1"(0), Y:"CRS:1"(0)], "application/json")' \
+  -w '\nHTTP %{http_code}, %{size_download} bytes\n'
+```
+
+How to read the result:
+- **HTTP 200 with 0 bytes:** the coverage is affected.
+- **A value** such as `"null null null null"`: the coverage is fine. Multi-band JSON comes back as one space-separated string in band order, and nil bands appear as `null`.
+- **HTTP 500 `Referenced file not found or not readable`:** an in-situ coverage whose source files have gone (section 7). This is unrelated to metadata.
+
+The repo's `scripts/rasdaman_metadata_check.py` does all of the above for one coverage or every coverage (section 9).
+
+**Reproduce it without a coverage.** This is useful for testing a phrase before you write it into metadata. The `for` clause is required by the parser but unused:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code} %{size_download} bytes\n' https://zeus.snap.uaf.edu/rasdaman/ows \
+  --data-urlencode service=WCS --data-urlencode version=2.0.1 --data-urlencode request=ProcessCoverages \
+  --data-urlencode 'query=for $c in (dot_precip) return encode(coverage n over $k x(0:2) values 1, "application/json", "{\"metadata\": {\"description\": \"PHRASE\"}}")'
+```
+
+`200 7 bytes` means the phrase is safe; `200 0 bytes` means it triggers the bug.
