@@ -50,7 +50,7 @@ One 1,268 GB orphan collection turned out to be ingested "in situ" — its tiles
 ## Repo Layout
 ```
 docs/          the guide, the audit, and the figures they reference
-scripts/       five read-only audit tools plus the workbook builder
+scripts/       six read-only audit tools plus the workbook builder
 data/          the inputs and outputs of the 2026-09-21/22/23 runs
 data/tile-dumps/   raw tile domains for seven coverages, gzipped
 data/physical_sizes.csv   every collection's real disk size, from RASBASE
@@ -62,6 +62,8 @@ utilities/     a netCDF-in, tiling-recommendations-out CLI tool -- see utilities
 Start with **[docs/rasdaman-tiling-guide.md](docs/rasdaman-tiling-guide.md)** — what "coverage" and "collection" each mean and how loosely they're joined, then what a tile is, what it costs, how a recipe becomes stored tiles. Then
 **[docs/rasdaman-tiling-audit.md](docs/rasdaman-tiling-audit.md)** for what is true of our server, and `rasdaman_tiling_audit.xlsx` for the per-coverage
 numbers behind it. **[docs/CRREL_GIPL_tiling.md](docs/CRREL_GIPL_tiling.md)** walks the whole process end to end on one real coverage — from `ncdump` to several tiling schemes to how they actually performed when benchmarked against the original — and is the place to start if you're about to tile something yourself. **[docs/benchmark-harness.md](docs/benchmark-harness.md)** is how its schemes were timed, and how to time your own. **[utilities/](utilities/README.md)** automates that same method: point it at a netCDF file and it recommends tiling schemes for point, polygon, full-domain-map, and WCPS-condense queries at several tile-size budgets, using the file's own real dimensions rather than a worked-by-hand example.
+
+**[docs/rasdaman-metadata-into.md](docs/rasdaman-metadata-into.md)** is separate from tiling: the word "into" in a coverage's metadata makes every encoded GetCoverage/WCPS response come back empty (HTTP 200, zero bytes). Read it before you write metadata for a new ingest.
 
 
 ## Running it yourself
@@ -205,6 +207,8 @@ collision, renamed, or a shadow collection squatting on a live coverage's name. 
 `rasdaman_collection_discover.py` probes candidate naming rules when no mapping is available. It exists for the case where `petascopedb` is unreachable; if you have the mapping, you do not need it. `--self-test` runs offline.
 
 All three have `--self-test` and detailed module docstrings.
+
+`rasdaman_metadata_check.py` finds coverages whose metadata contains the word "into" (which empties every encoded response) and probes each with a one-cell `encode()` to confirm. `--text` scans a recipe or `ncdump -h` output before ingest. Needs no credentials. See [docs/rasdaman-metadata-into.md](docs/rasdaman-metadata-into.md).
 
 ## Caveats
 

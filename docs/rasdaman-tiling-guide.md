@@ -344,7 +344,8 @@ This works on coverages rasql cannot reach at all, and it is the most reliable a
 1. `wcst_import.sh --recipe general_coverage --analyze` for a dry run that doesn't touch the database.
 2. Estimate the size: `(product of all axis extents) × (bands) × (bytes per value)`. A source netCDF much smaller than this is normal — HDF5 compresses internally. Rasdaman compresses too, so `RAS_MDDOBJECTS.PhysicalSize` (Section 3.3) usually lands below this estimate once ingest finishes. If `dbinfo`'s `totalSize` reads well above it, don't panic — check `PhysicalSize` before concluding anything, since `totalSize` inflates on its own if the coverage already existed when the recipe ran (Section 3.3). `PhysicalSize` landing above the estimate would be the real warning sign; we have not seen that happen on this server.
 3. Test the tiling on a small subset before committing to a multi-hundred-GB run. A bad tile choice is expensive to discover halfway through.
-4. After ingest, run the five checks in Section 9, and spot-check one known coordinate against the source file to confirm axis order.
+4. Keep the word "into" out of the recipe metadata and the netCDF attributes: `ncdump -h file.nc | python3 scripts/rasdaman_metadata_check.py --text -`. If it gets in, every encoded response from the coverage comes back empty. See [rasdaman-metadata-into.md](rasdaman-metadata-into.md).
+5. After ingest, run the five checks in Section 9, and spot-check one known coordinate against the source file to confirm axis order. Then run `python3 scripts/rasdaman_metadata_check.py --coverage ID --probe all` to confirm the coverage encodes.
 
 ---
 
